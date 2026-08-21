@@ -8,4 +8,4 @@ def send_telegram_message(config, text):
             url, data={"chat_id": config.telegram_chat_id, "text": text}, timeout=10
         )
     except requests.RequestException as exc:
-        print(f"텔레그램 알림 전송 실패: {exc}")
+        print(f"텔레그램 알림 전송 실패: {type(exc).__name__}")
