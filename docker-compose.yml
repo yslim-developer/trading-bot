@@ -1,0 +1,12 @@
+services:
+  tradingagents:
+    build:
+      context: ./vendor/tradingagents
+    # vendor/tradingagents/Dockerfile sets ENTRYPOINT ["tradingagents"] (its own CLI).
+    # We need `python /app/run_analysis.py ...` to run instead of being appended as
+    # args to that CLI, so the entrypoint is cleared here.
+    entrypoint: []
+    volumes:
+      - ./docker/run_analysis.py:/app/run_analysis.py:ro
+    env_file:
+      - .env
