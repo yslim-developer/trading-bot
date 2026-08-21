@@ -17,7 +17,7 @@ TradingAgents(docker) 분석 결과를 토스증권 오픈API로 완전자동 �
 ## 드라이런 (실주문 전 필수 검증)
 
 ```
-python orchestrator/main.py --dry-run
+python -m orchestrator.main --dry-run
 ```
 
 며칠간 텔레그램 알림으로 "이런 주문이 나갔을 것"을 확인한 뒤에만 실거래로 전환할 것.
@@ -25,7 +25,7 @@ python orchestrator/main.py --dry-run
 ## 실거래 시작
 
 ```
-python orchestrator/main.py
+python -m orchestrator.main
 ```
 
 ## 킬스위치
