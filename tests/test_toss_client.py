@@ -74,6 +74,42 @@ def test_place_market_buy_sends_order_amount():
     }
 
 
+def test_get_holding_quantity_returns_raw_string_unconverted():
+    session = Mock()
+    session.request.side_effect = [
+        mock_response(200, {"access_token": "tok", "token_type": "Bearer", "expires_in": 86400}),
+        mock_response(200, {"result": [{"accountNo": "1", "accountSeq": 42, "accountType": "BROKERAGE"}]}),
+        mock_response(200, {"result": {"items": [{"symbol": "AAPL", "quantity": "10.0"}]}}),
+    ]
+    client = make_client(session)
+
+    quantity = client.get_holding_quantity("AAPL")
+
+    assert quantity == "10.0"
+
+
+def test_place_market_sell_sends_quantity_unmodified():
+    session = Mock()
+    session.request.side_effect = [
+        mock_response(200, {"access_token": "tok", "token_type": "Bearer", "expires_in": 86400}),
+        mock_response(200, {"result": [{"accountNo": "1", "accountSeq": 42, "accountType": "BROKERAGE"}]}),
+        mock_response(200, {"result": {"orderId": "order-2", "clientOrderId": "cid-2"}}),
+    ]
+    client = make_client(session)
+
+    result = client.place_market_sell("AAPL", "10.0", "cid-2")
+
+    assert result == {"orderId": "order-2", "clientOrderId": "cid-2"}
+    order_call = session.request.call_args_list[2]
+    assert order_call.kwargs["json"] == {
+        "clientOrderId": "cid-2",
+        "symbol": "AAPL",
+        "side": "SELL",
+        "orderType": "MARKET",
+        "quantity": "10.0",
+    }
+
+
 def test_4xx_error_is_not_retried():
     session = Mock()
     session.request.return_value = mock_response(

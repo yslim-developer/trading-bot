@@ -116,7 +116,7 @@ class TossClient:
             "GET", "/api/v1/holdings", headers=self._auth_headers(), params={"symbol": ticker}
         )
         items = body["result"]["items"]
-        return float(items[0]["quantity"]) if items else 0.0
+        return items[0]["quantity"] if items else "0"
 
     def place_market_buy(self, ticker, amount_usd, client_order_id):
         return self._place_order(
