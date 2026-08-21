@@ -10,6 +10,10 @@ def normalize_decision(raw):
                 raw = value
                 break
     text = str(raw).upper()
+    if "OVERWEIGHT" in text:
+        return "BUY"
+    if "UNDERWEIGHT" in text:
+        return "SELL"
     for action in ("BUY", "SELL", "HOLD"):
         if action in text:
             return action

@@ -14,6 +14,14 @@ from orchestrator.trading_agents_client import normalize_decision, run_analysis
         ({"final_decision": "The decision is HOLD for now."}, "HOLD"),
         ("I recommend a strong SELL position here", "SELL"),
         ({"unrelated_key": "no signal here"}, "HOLD"),
+        # Real TradingAgentsGraph.propagate() output: a plain string from its
+        # fixed 5-tier scale (see vendor/tradingagents/tradingagents/agents/
+        # utils/rating.py and graph/signal_processing.py).
+        ("Buy", "BUY"),
+        ("Overweight", "BUY"),
+        ("Hold", "HOLD"),
+        ("Underweight", "SELL"),
+        ("Sell", "SELL"),
     ],
 )
 def test_normalize_decision(raw, expected):
