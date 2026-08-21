@@ -16,7 +16,7 @@ from orchestrator.state import (
     mark_run_started,
     record_order,
 )
-from orchestrator.toss_client import TossClient
+from orchestrator.toss_client import TossApiError, TossClient
 from orchestrator.trading_agents_client import run_analysis
 
 STOP_FILE = "STOP"
@@ -85,17 +85,42 @@ def run(dry_run):
                 continue
 
             client_order_id = f"{run_date}-{r.ticker}-{r.action}"
+            result = None
             try:
                 if r.action == "BUY":
                     result = toss.place_market_buy(r.ticker, r.amount_usd, client_order_id)
-                    mark_order_placed(conn, run_date, r.ticker, r.action, result["orderId"])
                 elif r.action == "SELL":
                     quantity = toss.get_holding_quantity(r.ticker)
                     if float(quantity) > 0:
                         result = toss.place_market_sell(r.ticker, quantity, client_order_id)
-                        mark_order_placed(conn, run_date, r.ticker, r.action, result["orderId"])
+            except TossApiError as exc:
+                # Order was never confirmed placed. Per design doc, a Toss API
+                # auth/connection failure aborts the whole run (unlike a
+                # per-ticker analysis failure, which is isolated) rather than
+                # producing N confusing "주문 실패" lines for what's really
+                # one broker outage.
+                summary_lines.append(
+                    f"[{run_date}] 토스 API 연결 실패 - 나머지 주문을 중단합니다: {exc}"
+                )
+                break
             except Exception as exc:
                 summary_lines.append(f"  주문 실패: {exc}")
+                continue
+
+            if result is None:
+                continue
+
+            try:
+                mark_order_placed(conn, run_date, r.ticker, r.action, result["orderId"])
+            except Exception as exc:
+                # Order WAS placed (real money moved) but the local ledger
+                # write failed — must be visually distinct from a normal
+                # rejection/failure since same-day retry won't happen
+                # (mark_run_completed still fires below).
+                summary_lines.append(
+                    f"[{run_date}] {r.ticker} 주문은 체결됐으나 로컬 기록 실패 "
+                    f"(order_id={result['orderId']}): {exc} - 수동 확인 필요"
+                )
 
         send_telegram_message(config, "\n".join(summary_lines))
         mark_run_completed(conn, run_date)

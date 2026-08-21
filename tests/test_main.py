@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 import orchestrator.main as main_module
 from orchestrator.risk_engine import AccountState, RiskLimits
 from orchestrator.state import init_db, mark_order_placed, mark_run_started, record_order
+from orchestrator.toss_client import TossApiError
 
 
 def make_config():
@@ -132,3 +134,92 @@ def test_already_placed_order_is_skipped_on_retry(monkeypatch):
     main_module.run(dry_run=False)
 
     assert captured["buys"] == ["MSFT"]
+
+
+def test_toss_api_error_on_placement_aborts_remaining_orders(monkeypatch):
+    attempted = []
+
+    class FailingTossClient(FakeTossClient):
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            attempted.append(ticker)
+            raise TossApiError(401, "unauthorized", "token expired")
+
+    monkeypatch.setattr(main_module, "TossClient", FailingTossClient)
+
+    sent = []
+    monkeypatch.setattr(
+        main_module, "send_telegram_message", lambda config, text: sent.append(text)
+    )
+
+    main_module.run(dry_run=False)  # 예외 없이 조기 종료되어야 함 (전체 중단이지 크래시가 아님)
+
+    # watchlist == ["AAPL", "MSFT"]; only the first ticker's placement should be attempted
+    assert attempted == ["AAPL"]
+    assert any("토스 API 연결 실패" in text and "나머지 주문을 중단" in text for text in sent)
+
+    conn = init_db(main_module.DB_PATH)
+    run_date = main_module.date.today().isoformat()
+    # run must still be marked completed so it isn't blindly retried same-day
+    row = conn.execute(
+        "SELECT status FROM runs WHERE run_date = ?", (run_date,)
+    ).fetchone()
+    assert row[0] == "completed"
+
+
+def test_mark_order_placed_failure_is_reported_distinctly(monkeypatch):
+    def raising_mark_order_placed(conn, run_date, ticker, action, order_id):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(main_module, "mark_order_placed", raising_mark_order_placed)
+
+    sent = []
+    monkeypatch.setattr(
+        main_module, "send_telegram_message", lambda config, text: sent.append(text)
+    )
+
+    main_module.run(dry_run=False)
+
+    summary = "\n".join(sent)
+    assert "체결됐으나 로컬 기록 실패" in summary
+    assert "order_id=1" in summary
+    assert "수동 확인 필요" in summary
+    # must be distinguishable from a normal placement failure line
+    assert "주문 실패" not in summary.split("체결됐으나")[0].split("\n")[-1]
+
+
+def test_sell_flow_places_order_with_holding_quantity(monkeypatch):
+    calls = {"get_holding_quantity": [], "place_market_sell": []}
+
+    class SellTossClient(FakeTossClient):
+        def get_account_state(self, watchlist):
+            return AccountState(positions_usd={"AAPL": 500.0}, daily_pnl_pct=0.0)
+
+        def get_holding_quantity(self, ticker):
+            calls["get_holding_quantity"].append(ticker)
+            return "3.5"
+
+        def place_market_sell(self, ticker, quantity, client_order_id):
+            calls["place_market_sell"].append((ticker, quantity, client_order_id))
+            return {"orderId": "sell-1", "clientOrderId": client_order_id}
+
+    monkeypatch.setattr(main_module, "TossClient", SellTossClient)
+    monkeypatch.setattr(
+        main_module,
+        "run_analysis",
+        lambda ticker, run_date: "SELL" if ticker == "AAPL" else "HOLD",
+    )
+
+    main_module.run(dry_run=False)
+
+    run_date = main_module.date.today().isoformat()
+    assert calls["get_holding_quantity"] == ["AAPL"]
+    assert calls["place_market_sell"] == [
+        ("AAPL", "3.5", f"{run_date}-AAPL-SELL")
+    ]
+
+    conn = init_db(main_module.DB_PATH)
+    row = conn.execute(
+        "SELECT order_id, placed FROM orders WHERE run_date = ? AND ticker = ? AND action = 'SELL'",
+        (run_date, "AAPL"),
+    ).fetchone()
+    assert row == ("sell-1", 1)
