@@ -1296,7 +1296,7 @@ class FakeTossClient:
         return {"orderId": "1", "clientOrderId": client_order_id}
 
     def get_holding_quantity(self, ticker):
-        return 0.0
+        return "0"
 
     def place_market_sell(self, ticker, quantity, client_order_id):
         self.orders.append(("SELL", ticker, quantity))
@@ -1458,7 +1458,7 @@ def run(dry_run):
                     toss.place_market_buy(r.ticker, r.amount_usd, client_order_id)
                 elif r.action == "SELL":
                     quantity = toss.get_holding_quantity(r.ticker)
-                    if quantity > 0:
+                    if float(quantity) > 0:
                         toss.place_market_sell(r.ticker, quantity, client_order_id)
             except Exception as exc:
                 summary_lines.append(f"  주문 실패: {exc}")
