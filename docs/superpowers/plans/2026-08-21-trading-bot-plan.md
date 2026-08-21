@@ -1615,6 +1615,23 @@ Task 6에서 이를 흡수하는 정규화 래퍼(`normalize_decision`)로 실�
 아니라 지금 확정된 설계.
 ```
 
+## Task 8 구현 중 발견된 안전 이슈 및 후속 수정 (실행 기록)
+
+Task 8 코드 품질 검토에서 "프로세스가 중간에 죽고 재시도될 경우 이미 체결된 주문이 중복 제출될 수 있다"는
+Critical 이슈가 발견되어 구현 단계에서 다음을 추가했다 (원래 계획에는 없던 내용이므로 여기 기록한다):
+
+- `orchestrator/state.py`의 `orders` 테이블에 `placed INTEGER NOT NULL DEFAULT 0`, `order_id TEXT` 컬럼 추가.
+- `mark_order_placed(conn, run_date, ticker, action, order_id)` — 해당 키의 **가장 최근 미체결(`placed=0`) 행 하나만**
+  타겟팅해 업데이트 (재시도로 같은 키에 중복 로그 행이 쌓여도 하나만 정확히 갱신되도록 서브쿼리로 행을 특정).
+- `has_order_been_placed(conn, run_date, ticker, action) -> bool` — 오늘 이미 실제로 체결된 주문인지 확인.
+- `orchestrator/main.py`의 주문 실행 루프는 토스 API 호출 전 `has_order_been_placed`로 먼저 확인하고, 이미
+  체결됐으면 건너뛴 뒤 요약에 기록한다. 성공적으로 체결하면 토스 응답의 `orderId`로 `mark_order_placed`를 호출한다.
+- `init_db(DB_PATH)` 호출 전 `os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)`를 추가하고, `conn = init_db(...)`
+  자체를 `try` 블록 안으로 옮겨(최초 클론 시 `data/` 디렉터리가 git에 없어 `init_db`가 즉시 실패하던 문제) 실패
+  시에도 텔레그램 알림이 나가도록 수정.
+- `test_stop_file_skips_everything`을 `runs` 테이블에 행 자체가 없음을 직접 확인하도록 강화 (기존 assertion은
+  `'started'` 행이 생겨도 통과했음).
+
 ---
 
 **Plan complete and saved to `docs/superpowers/plans/2026-08-21-trading-bot-plan.md`. 실행 방식을 선택해 주세요:**
