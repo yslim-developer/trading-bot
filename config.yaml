@@ -6,7 +6,7 @@ watchlist:
   - NVDA
 
 risk_limits:
-  per_ticker_max_usd: 50
+  per_ticker_max_usd: 10
   daily_max_buy_usd: 300
   daily_loss_circuit_pct: -3.0
   max_concurrent_positions: 5
