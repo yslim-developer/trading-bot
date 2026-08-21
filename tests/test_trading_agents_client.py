@@ -36,11 +36,12 @@ def test_run_analysis_parses_last_json_line(monkeypatch):
         '{"ticker": "AAPL", "date": "2026-08-21", "action": "BUY", "raw_decision": "BUY"}\n'
     )
 
-    def fake_run(cmd, capture_output, text, timeout, check):
+    def fake_run(cmd, capture_output, text, encoding, errors, timeout, check):
         assert cmd == [
             "docker", "compose", "run", "--rm", "tradingagents",
             "python", "/app/run_analysis.py", "AAPL", "2026-08-21",
         ]
+        assert encoding == "utf-8"
         return fake_result
 
     monkeypatch.setattr(subprocess, "run", fake_run)

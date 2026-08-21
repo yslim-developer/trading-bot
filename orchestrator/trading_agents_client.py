@@ -35,6 +35,8 @@ def run_analysis(ticker, run_date, timeout_seconds=1800):
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout_seconds,
         check=True,
     )
