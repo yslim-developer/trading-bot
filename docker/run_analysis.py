@@ -31,6 +31,15 @@ def main():
     args = parser.parse_args()
 
     config = DEFAULT_CONFIG.copy()
+    # Force Gemini (free-tier GOOGLE_API_KEY, see README) instead of the
+    # vendored default of OpenAI, which would fail every run with no
+    # OPENAI_API_KEY set. Explicit dict overrides here (rather than relying on
+    # TRADINGAGENTS_* env vars threading through docker-compose) are easier to
+    # verify by reading this file alone. Keys confirmed present in
+    # tradingagents/default_config.py's DEFAULT_CONFIG.
+    config["llm_provider"] = "google"
+    config["deep_think_llm"] = "gemini-3.5-flash"
+    config["quick_think_llm"] = "gemini-3.1-flash-lite"
     graph = TradingAgentsGraph(debug=False, config=config)
     _, raw_decision = graph.propagate(args.ticker, args.date)
 
