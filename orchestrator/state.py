@@ -81,8 +81,11 @@ def record_order(conn, run_date, ticker, action, amount_usd, approved, reason):
 
 def mark_order_placed(conn, run_date, ticker, action, order_id):
     conn.execute(
-        "UPDATE orders SET placed = 1, order_id = ? "
-        "WHERE run_date = ? AND ticker = ? AND action = ?",
+        "UPDATE orders SET placed = 1, order_id = ? WHERE id = ("
+        "  SELECT id FROM orders"
+        "  WHERE run_date = ? AND ticker = ? AND action = ? AND placed = 0"
+        "  ORDER BY id DESC LIMIT 1"
+        ")",
         (order_id, run_date, ticker, action),
     )
     conn.commit()

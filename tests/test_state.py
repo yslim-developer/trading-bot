@@ -71,3 +71,17 @@ def test_order_placed_after_mark(conn):
     assert has_order_been_placed(conn, "2026-08-21", "AAPL", "BUY") is True
     row = conn.execute("SELECT order_id FROM orders WHERE ticker = 'AAPL'").fetchone()
     assert row == ("order-123",)
+
+
+def test_mark_order_placed_only_stamps_one_row_when_duplicate_rows_exist(conn):
+    # 크래시 후 재실행으로 같은 (run_date, ticker, action)에 대해
+    # record_order가 두 번 호출된 상황을 재현한다.
+    mark_run_started(conn, "2026-08-21")
+    record_order(conn, "2026-08-21", "AAPL", "BUY", 100.0, True, "approved")
+    record_order(conn, "2026-08-21", "AAPL", "BUY", 100.0, True, "approved")
+
+    mark_order_placed(conn, "2026-08-21", "AAPL", "BUY", "order-123")
+
+    rows = conn.execute("SELECT placed, order_id FROM orders WHERE ticker = 'AAPL'").fetchall()
+    assert rows.count((1, "order-123")) == 1
+    assert rows.count((0, None)) == 1
