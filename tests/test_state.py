@@ -3,10 +3,12 @@ import sqlite3
 import pytest
 
 from orchestrator.state import (
+    has_order_been_placed,
     has_run_completed_today,
     init_db,
     is_circuit_breaker_triggered_today,
     mark_circuit_breaker_triggered,
+    mark_order_placed,
     mark_run_completed,
     mark_run_started,
     record_order,
@@ -54,3 +56,18 @@ def test_record_order_inserts_row(conn):
         "SELECT ticker, action, amount_usd, approved, reason FROM orders"
     ).fetchone()
     assert row == ("AAPL", "BUY", 100.0, 1, "approved")
+
+
+def test_order_not_placed_before_marked(conn):
+    mark_run_started(conn, "2026-08-21")
+    record_order(conn, "2026-08-21", "AAPL", "BUY", 100.0, True, "approved")
+    assert has_order_been_placed(conn, "2026-08-21", "AAPL", "BUY") is False
+
+
+def test_order_placed_after_mark(conn):
+    mark_run_started(conn, "2026-08-21")
+    record_order(conn, "2026-08-21", "AAPL", "BUY", 100.0, True, "approved")
+    mark_order_placed(conn, "2026-08-21", "AAPL", "BUY", "order-123")
+    assert has_order_been_placed(conn, "2026-08-21", "AAPL", "BUY") is True
+    row = conn.execute("SELECT order_id FROM orders WHERE ticker = 'AAPL'").fetchone()
+    assert row == ("order-123",)

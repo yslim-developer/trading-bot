@@ -6,10 +6,12 @@ from orchestrator.config import load_config
 from orchestrator.notifier import send_telegram_message
 from orchestrator.risk_engine import Decision, evaluate_decisions
 from orchestrator.state import (
+    has_order_been_placed,
     has_run_completed_today,
     init_db,
     is_circuit_breaker_triggered_today,
     mark_circuit_breaker_triggered,
+    mark_order_placed,
     mark_run_completed,
     mark_run_started,
     record_order,
@@ -23,10 +25,15 @@ DB_PATH = "data/trading.db"
 
 def run(dry_run):
     config = load_config()
-    conn = init_db(DB_PATH)
+    conn = None
     run_date = date.today().isoformat()
 
     try:
+        db_dir = os.path.dirname(DB_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        conn = init_db(DB_PATH)
+
         if os.path.exists(STOP_FILE):
             send_telegram_message(config, f"[{run_date}] STOP 파일 발견 - 자동매매를 건너뜁니다.")
             return
@@ -73,14 +80,20 @@ def run(dry_run):
             if not r.approved or dry_run:
                 continue
 
+            if has_order_been_placed(conn, run_date, r.ticker, r.action):
+                summary_lines.append("  이미 주문 처리됨 - 재실행에서 건너뜀")
+                continue
+
             client_order_id = f"{run_date}-{r.ticker}-{r.action}"
             try:
                 if r.action == "BUY":
-                    toss.place_market_buy(r.ticker, r.amount_usd, client_order_id)
+                    result = toss.place_market_buy(r.ticker, r.amount_usd, client_order_id)
+                    mark_order_placed(conn, run_date, r.ticker, r.action, result["orderId"])
                 elif r.action == "SELL":
                     quantity = toss.get_holding_quantity(r.ticker)
                     if float(quantity) > 0:
-                        toss.place_market_sell(r.ticker, quantity, client_order_id)
+                        result = toss.place_market_sell(r.ticker, quantity, client_order_id)
+                        mark_order_placed(conn, run_date, r.ticker, r.action, result["orderId"])
             except Exception as exc:
                 summary_lines.append(f"  주문 실패: {exc}")
 
@@ -91,7 +104,8 @@ def run(dry_run):
         send_telegram_message(config, f"[{run_date}] 실행 중 예외 발생: {exc}")
         raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 def main():

@@ -21,7 +21,9 @@ def init_db(db_path):
             action TEXT NOT NULL,
             amount_usd REAL NOT NULL,
             approved INTEGER NOT NULL,
-            reason TEXT NOT NULL
+            reason TEXT NOT NULL,
+            placed INTEGER NOT NULL DEFAULT 0,
+            order_id TEXT
         )
         """
     )
@@ -75,3 +77,20 @@ def record_order(conn, run_date, ticker, action, amount_usd, approved, reason):
         (run_date, ticker, action, amount_usd, int(approved), reason),
     )
     conn.commit()
+
+
+def mark_order_placed(conn, run_date, ticker, action, order_id):
+    conn.execute(
+        "UPDATE orders SET placed = 1, order_id = ? "
+        "WHERE run_date = ? AND ticker = ? AND action = ?",
+        (order_id, run_date, ticker, action),
+    )
+    conn.commit()
+
+
+def has_order_been_placed(conn, run_date, ticker, action):
+    row = conn.execute(
+        "SELECT 1 FROM orders WHERE run_date = ? AND ticker = ? AND action = ? AND placed = 1",
+        (run_date, ticker, action),
+    ).fetchone()
+    return row is not None

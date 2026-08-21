@@ -5,7 +5,7 @@ import pytest
 
 import orchestrator.main as main_module
 from orchestrator.risk_engine import AccountState, RiskLimits
-from orchestrator.state import init_db
+from orchestrator.state import init_db, mark_order_placed, mark_run_started, record_order
 
 
 def make_config():
@@ -61,7 +61,10 @@ def test_stop_file_skips_everything(monkeypatch, tmp_path):
     main_module.run(dry_run=False)
 
     conn = init_db(str(tmp_path / "trading.db"))
-    assert main_module.has_run_completed_today(conn, main_module.date.today().isoformat()) is False
+    row = conn.execute(
+        "SELECT 1 FROM runs WHERE run_date = ?", (main_module.date.today().isoformat(),)
+    ).fetchone()
+    assert row is None
 
 
 def test_normal_run_places_approved_orders(monkeypatch):
@@ -106,3 +109,26 @@ def test_circuit_breaker_blocks_orders(monkeypatch):
     )
 
     main_module.run(dry_run=False)  # 예외 없이 조기 종료되어야 함
+
+
+def test_already_placed_order_is_skipped_on_retry(monkeypatch):
+    # 크래시 후 재실행 시나리오: AAPL은 이전 실행에서 이미 주문이 체결됨
+    run_date = main_module.date.today().isoformat()
+    conn = init_db(main_module.DB_PATH)
+    mark_run_started(conn, run_date)
+    record_order(conn, run_date, "AAPL", "BUY", 100.0, True, "approved")
+    mark_order_placed(conn, run_date, "AAPL", "BUY", "order-1")
+    conn.close()
+
+    captured = {"buys": []}
+
+    class TrackingTossClient(FakeTossClient):
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            captured["buys"].append(ticker)
+            return super().place_market_buy(ticker, amount_usd, client_order_id)
+
+    monkeypatch.setattr(main_module, "TossClient", TrackingTossClient)
+
+    main_module.run(dry_run=False)
+
+    assert captured["buys"] == ["MSFT"]
