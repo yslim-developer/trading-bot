@@ -986,14 +986,18 @@ TradingAgents의 `propagate()`가 반환하는 `decision` 객체의 정확한 �
 ```python
 import argparse
 import json
-import sys
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 
 
 def normalize_decision(raw):
-    """propagate()의 decision 반환값을 BUY/SELL/HOLD 문자열로 정규화한다."""
+    """propagate()의 decision 반환값을 BUY/SELL/HOLD 문자열로 정규화한다.
+
+    실제 TradingAgents는 Buy/Overweight/Hold/Underweight/Sell 5단계 등급을
+    문자열로 반환한다 (dict 분기는 방어적으로만 남겨둠). Overweight/Underweight는
+    방향성이 있는 신호이므로 각각 BUY/SELL로 매핑한다.
+    """
     if isinstance(raw, dict):
         for key in ("action", "decision", "final_decision", "signal"):
             value = raw.get(key)
@@ -1001,6 +1005,10 @@ def normalize_decision(raw):
                 raw = value
                 break
     text = str(raw).upper()
+    if "OVERWEIGHT" in text:
+        return "BUY"
+    if "UNDERWEIGHT" in text:
+        return "SELL"
     for action in ("BUY", "SELL", "HOLD"):
         if action in text:
             return action
@@ -1123,6 +1131,10 @@ def normalize_decision(raw):
                 raw = value
                 break
     text = str(raw).upper()
+    if "OVERWEIGHT" in text:
+        return "BUY"
+    if "UNDERWEIGHT" in text:
+        return "SELL"
     for action in ("BUY", "SELL", "HOLD"):
         if action in text:
             return action
