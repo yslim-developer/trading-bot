@@ -1,6 +1,8 @@
 watchlist:
   - AAPL
   - MSFT
+  - GOOGL
+  - AMZN
   - NVDA
 
 risk_limits:
