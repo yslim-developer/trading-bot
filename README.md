@@ -15,6 +15,7 @@ TradingAgents(docker) 분석 결과를 토스증권 오픈API로 완전자동 �
    - `TOSS_CLIENT_ID`, `TOSS_CLIENT_SECRET`: 토스증권 오픈API 발급 값
    - `GOOGLE_API_KEY`: Gemini 무료 API 키 (TradingAgents 컨테이너가 사용)
    - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: 알림용 텔레그램 봇
+   - `HEALTHCHECK_PING_URL` (선택): 아래 "무응답 감지" 참고
 4. `config.yaml`에서 감시 종목·리스크 한도 확인/조정
 5. `docker compose build` 로 TradingAgents 이미지 빌드
 
@@ -52,8 +53,18 @@ Register-ScheduledTask -TaskName "TradingBot Daily Run" -Action $action -Trigger
 
 미국 서머타임(EDT/EST) 전환 시 `run_time_kst` 및 위 스케줄 시각을 수동으로 1시간 조정해야 한다 (Phase 1 범위 밖 자동화).
 
-## 알려진 제한사항
+## 무응답 감지 (선택, 강력 권장)
 
-- **기동/생존 확인 알림 미구현**: 설계 문서는 봇이 죽었는지(예: PC가 예약 시각에 아예 깨어나지 않는 경우) 감지할 수 있도록
-  실행 시작/종료 시 텔레그램 하트비트를 보내는 것을 권장하지만, Phase 1에는 아직 구현되어 있지 않다. 의도적으로 다음
-  세션으로 미룬 항목이며, 현재는 예약된 실행이 아예 발생하지 않아도 알림이 오지 않는다.
+봇 프로세스 안에서만 알림을 보내는 방식으로는 "PC가 예약 시각에 아예 깨어나지 않아 스크립트가 시작조차 못 한 경우"를
+감지할 수 없다 — 프로세스가 없으면 알림을 보낼 주체도 없기 때문이다. 이를 잡으려면 PC 밖의 독립적인 감시 서비스가
+필요하다.
+
+1. [healthchecks.io](https://healthchecks.io)에 무료 가입 (신용카드 불필요)
+2. Check를 하나 만들고, Period를 하루(24h)보다 넉넉하게(예: Grace Time 포함 26~27시간) 설정 — 예약 시각이 매일
+   조금씩 밀릴 수 있는 여유를 둔다
+3. 발급된 Ping URL을 `.env`의 `HEALTHCHECK_PING_URL`에 채워 넣는다
+4. (선택) healthchecks.io의 Integrations에서 Telegram 연동을 추가하면, 놓친 체크인도 기존 텔레그램 채팅방으로
+   알림이 온다
+
+설정하면 봇이 실행 시작(`/start`), 정상 종료(성공), 처리되지 않은 예외로 실패(`/fail`) 시점마다 자동으로 핑을 보낸다.
+`HEALTHCHECK_PING_URL`을 비워두면 이 기능은 조용히 비활성화된다(기존 동작에 영향 없음).

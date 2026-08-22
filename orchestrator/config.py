@@ -16,6 +16,7 @@ class AppConfig:
     toss_client_secret: str
     telegram_bot_token: str
     telegram_chat_id: str
+    healthcheck_ping_url: str
 
 
 def load_config(config_path="config.yaml", env_path=".env"):
@@ -38,4 +39,5 @@ def load_config(config_path="config.yaml", env_path=".env"):
         toss_client_secret=os.environ["TOSS_CLIENT_SECRET"],
         telegram_bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
         telegram_chat_id=os.environ["TELEGRAM_CHAT_ID"],
+        healthcheck_ping_url=os.environ.get("HEALTHCHECK_PING_URL", ""),
     )

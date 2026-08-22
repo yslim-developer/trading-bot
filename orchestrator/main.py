@@ -3,7 +3,7 @@ import os
 from datetime import date
 
 from orchestrator.config import load_config
-from orchestrator.notifier import send_telegram_message
+from orchestrator.notifier import ping_healthcheck, send_telegram_message
 from orchestrator.risk_engine import Decision, evaluate_decisions
 from orchestrator.state import (
     has_order_been_placed,
@@ -36,10 +36,14 @@ def run(dry_run):
 
         if os.path.exists(STOP_FILE):
             send_telegram_message(config, f"[{run_date}] STOP 파일 발견 - 자동매매를 건너뜁니다.")
+            ping_healthcheck(config)
             return
+
+        ping_healthcheck(config, "/start")
 
         if has_run_completed_today(conn, run_date):
             send_telegram_message(config, f"[{run_date}] 오늘 실행이 이미 완료되어 재실행을 건너뜁니다.")
+            ping_healthcheck(config)
             return
 
         mark_run_started(conn, run_date)
@@ -55,6 +59,7 @@ def run(dry_run):
                 config,
                 f"[{run_date}] 서킷브레이커 발동 (당일 손익 {account.daily_pnl_pct:.2f}%) - 신규 주문 없음.",
             )
+            ping_healthcheck(config)
             mark_run_completed(conn, run_date)
             return
 
@@ -123,10 +128,12 @@ def run(dry_run):
                 )
 
         send_telegram_message(config, "\n".join(summary_lines))
+        ping_healthcheck(config)
         mark_run_completed(conn, run_date)
 
     except Exception as exc:
         send_telegram_message(config, f"[{run_date}] 실행 중 예외 발생: {exc}")
+        ping_healthcheck(config, "/fail")
         raise
     finally:
         if conn:

@@ -24,6 +24,7 @@ def make_config():
         toss_client_secret="secret",
         telegram_bot_token="tok",
         telegram_chat_id="chat",
+        healthcheck_ping_url="https://hc-ping.com/test123",
     )
 
 
@@ -52,6 +53,7 @@ def patch_dependencies(monkeypatch, tmp_path):
     monkeypatch.setattr(main_module, "TossClient", FakeTossClient)
     monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: "BUY")
     monkeypatch.setattr(main_module, "send_telegram_message", lambda config, text: None)
+    monkeypatch.setattr(main_module, "ping_healthcheck", lambda config, suffix="": None)
     monkeypatch.setattr(main_module, "DB_PATH", str(tmp_path / "trading.db"))
     monkeypatch.setattr(main_module, "STOP_FILE", str(tmp_path / "STOP"))
     monkeypatch.chdir(tmp_path)
@@ -134,6 +136,52 @@ def test_already_placed_order_is_skipped_on_retry(monkeypatch):
     main_module.run(dry_run=False)
 
     assert captured["buys"] == ["MSFT"]
+
+
+def test_healthcheck_pings_start_and_success_on_normal_run(monkeypatch):
+    pings = []
+    monkeypatch.setattr(
+        main_module, "ping_healthcheck", lambda config, suffix="": pings.append(suffix)
+    )
+
+    main_module.run(dry_run=False)
+
+    assert pings == ["/start", ""]
+
+
+def test_healthcheck_pings_success_only_on_stop_file_without_start(monkeypatch, tmp_path):
+    pings = []
+    monkeypatch.setattr(
+        main_module, "ping_healthcheck", lambda config, suffix="": pings.append(suffix)
+    )
+    (tmp_path / "STOP").write_text("stop")
+
+    main_module.run(dry_run=False)
+
+    assert pings == [""]
+
+
+def test_healthcheck_pings_fail_on_unhandled_exception(monkeypatch):
+    pings = []
+    monkeypatch.setattr(
+        main_module, "ping_healthcheck", lambda config, suffix="": pings.append(suffix)
+    )
+    monkeypatch.setattr(
+        main_module,
+        "run_analysis",
+        lambda ticker, run_date: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    class BrokenTossClient(FakeTossClient):
+        def get_account_state(self, watchlist):
+            raise RuntimeError("account fetch broke")
+
+    monkeypatch.setattr(main_module, "TossClient", BrokenTossClient)
+
+    with pytest.raises(RuntimeError):
+        main_module.run(dry_run=False)
+
+    assert pings == ["/start", "/fail"]
 
 
 def test_toss_api_error_on_placement_aborts_remaining_orders(monkeypatch):
