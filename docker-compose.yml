@@ -9,5 +9,8 @@ services:
     volumes:
       - ./docker/run_analysis.py:/app/run_analysis.py:ro
       - ./orchestrator/decision_mapping.py:/app/decision_mapping.py:ro
-    env_file:
-      - .env
+    # 컨테이너는 TradingAgents(Gemini) 호출에만 쓰이므로 .env 전체 대신
+    # 필요한 키만 넘긴다 (compose가 .env를 변수 치환용으로 자동으로 읽음 --
+    # env_file 지시자와 무관하게 항상 동작하는 compose 내장 기능).
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
