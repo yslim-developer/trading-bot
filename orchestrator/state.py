@@ -23,7 +23,8 @@ def init_db(db_path):
             approved INTEGER NOT NULL,
             reason TEXT NOT NULL,
             placed INTEGER NOT NULL DEFAULT 0,
-            order_id TEXT
+            order_id TEXT,
+            quantity TEXT
         )
         """
     )
@@ -79,14 +80,14 @@ def record_order(conn, run_date, ticker, action, amount_usd, approved, reason):
     conn.commit()
 
 
-def mark_order_placed(conn, run_date, ticker, action, order_id):
+def mark_order_placed(conn, run_date, ticker, action, order_id, quantity=None):
     conn.execute(
-        "UPDATE orders SET placed = 1, order_id = ? WHERE id = ("
+        "UPDATE orders SET placed = 1, order_id = ?, quantity = ? WHERE id = ("
         "  SELECT id FROM orders"
         "  WHERE run_date = ? AND ticker = ? AND action = ? AND placed = 0"
         "  ORDER BY id DESC LIMIT 1"
         ")",
-        (order_id, run_date, ticker, action),
+        (order_id, quantity, run_date, ticker, action),
     )
     conn.commit()
 

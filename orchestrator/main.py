@@ -28,7 +28,9 @@ STOP_FILE = "STOP"
 DB_PATH = "data/trading.db"
 
 
-def _mark_order_placed_with_retry(conn, run_date, ticker, action, order_id, attempts=3, delay_seconds=0.2):
+def _mark_order_placed_with_retry(
+    conn, run_date, ticker, action, order_id, quantity=None, attempts=3, delay_seconds=0.2
+):
     """mark_order_placed를 몇 번 재시도한다.
 
     체결 직후 로컬 DB 기록 실패는 대개 일시적(락 경합 등)이라, 몇 번의 짧은
@@ -38,7 +40,7 @@ def _mark_order_placed_with_retry(conn, run_date, ticker, action, order_id, atte
     last_exc = None
     for attempt in range(attempts):
         try:
-            mark_order_placed(conn, run_date, ticker, action, order_id)
+            mark_order_placed(conn, run_date, ticker, action, order_id, quantity=quantity)
             return
         except Exception as exc:
             last_exc = exc
@@ -150,13 +152,14 @@ def run(dry_run):
 
             client_order_id = f"{run_date}-{r.ticker}-{r.action}"
             result = None
+            sold_quantity = None
             try:
                 if r.action == "BUY":
                     result = toss.place_market_buy(r.ticker, r.amount_usd, client_order_id)
                 elif r.action == "SELL":
-                    quantity = toss.get_holding_quantity(r.ticker)
-                    if float(quantity) > 0:
-                        result = toss.place_market_sell(r.ticker, quantity, client_order_id)
+                    sold_quantity = toss.get_holding_quantity(r.ticker)
+                    if float(sold_quantity) > 0:
+                        result = toss.place_market_sell(r.ticker, sold_quantity, client_order_id)
             except TossApiError as exc:
                 # Order was never confirmed placed. Per design doc, a Toss API
                 # auth/connection failure aborts the whole run (unlike a
@@ -175,7 +178,10 @@ def run(dry_run):
                 continue
 
             try:
-                _mark_order_placed_with_retry(conn, run_date, r.ticker, r.action, result["orderId"])
+                _mark_order_placed_with_retry(
+                    conn, run_date, r.ticker, r.action, result["orderId"],
+                    quantity=sold_quantity if r.action == "SELL" else None,
+                )
             except Exception as exc:
                 # Order WAS placed (real money moved) but the local ledger
                 # write failed — must be visually distinct from a normal

@@ -416,7 +416,7 @@ def test_toss_api_error_on_placement_aborts_remaining_orders(monkeypatch):
 def test_mark_order_placed_retries_and_succeeds_without_failure_message(monkeypatch):
     call_count = {"n": 0}
 
-    def flaky_mark_order_placed(conn, run_date, ticker, action, order_id):
+    def flaky_mark_order_placed(conn, run_date, ticker, action, order_id, quantity=None):
         call_count["n"] += 1
         if call_count["n"] < 2:
             raise sqlite3.OperationalError("database is locked")
@@ -437,7 +437,7 @@ def test_mark_order_placed_retries_and_succeeds_without_failure_message(monkeypa
 
 
 def test_mark_order_placed_failure_is_reported_distinctly(monkeypatch):
-    def raising_mark_order_placed(conn, run_date, ticker, action, order_id):
+    def raising_mark_order_placed(conn, run_date, ticker, action, order_id, quantity=None):
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(main_module, "mark_order_placed", raising_mark_order_placed)
@@ -489,7 +489,7 @@ def test_sell_flow_places_order_with_holding_quantity(monkeypatch):
 
     conn = init_db(main_module.DB_PATH)
     row = conn.execute(
-        "SELECT order_id, placed FROM orders WHERE run_date = ? AND ticker = ? AND action = 'SELL'",
+        "SELECT order_id, placed, quantity FROM orders WHERE run_date = ? AND ticker = ? AND action = 'SELL'",
         (run_date, "AAPL"),
     ).fetchone()
-    assert row == ("sell-1", 1)
+    assert row == ("sell-1", 1, "3.5")
