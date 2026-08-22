@@ -279,6 +279,12 @@ def test_approval_mode_skips_orders_when_rejected(monkeypatch):
     assert len(rows) == 2
     assert all(approved == 1 and placed == 0 for _, approved, placed in rows)
 
+    # 거부됐으면 당일 재시도가 가능해야 함 (완료 처리되면 안 됨)
+    run_row = conn.execute(
+        "SELECT status FROM runs WHERE run_date = ?", (run_date,)
+    ).fetchone()
+    assert run_row[0] != "completed"
+
 
 def test_approval_mode_skips_orders_on_timeout(monkeypatch):
     monkeypatch.setattr(main_module, "load_config", lambda: make_approval_config())
@@ -296,6 +302,37 @@ def test_approval_mode_skips_orders_on_timeout(monkeypatch):
     main_module.run(dry_run=False)
 
     assert orders_placed == []
+
+    conn = init_db(main_module.DB_PATH)
+    run_date = main_module.date.today().isoformat()
+    run_row = conn.execute(
+        "SELECT status FROM runs WHERE run_date = ?", (run_date,)
+    ).fetchone()
+    assert run_row[0] != "completed"
+
+
+def test_approval_mode_rejection_allows_same_day_retry(monkeypatch):
+    # 첫 실행: 거부됨. 두번째 실행(같은 날, 재승인): 승인되면 실제로 주문이 나가야 함.
+    replies = iter(["rejected", "approved"])
+    monkeypatch.setattr(main_module, "load_config", lambda: make_approval_config())
+    monkeypatch.setattr(
+        main_module, "wait_for_telegram_reply", lambda config, timeout_seconds: next(replies)
+    )
+
+    orders_placed = []
+
+    class TrackingTossClient(FakeTossClient):
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            orders_placed.append(ticker)
+            return super().place_market_buy(ticker, amount_usd, client_order_id)
+
+    monkeypatch.setattr(main_module, "TossClient", TrackingTossClient)
+
+    main_module.run(dry_run=False)  # 1차: 거부
+    assert orders_placed == []
+
+    main_module.run(dry_run=False)  # 2차: 같은 날 재시도, 승인
+    assert orders_placed == ["AAPL", "MSFT"]
 
 
 def test_approval_mode_not_invoked_when_nothing_approved(monkeypatch):

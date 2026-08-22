@@ -161,7 +161,13 @@ def run(dry_run):
 
         send_telegram_message(config, "\n".join(summary_lines))
         ping_healthcheck(config)
-        mark_run_completed(conn, run_date)
+        if approval_granted:
+            mark_run_completed(conn, run_date)
+        else:
+            send_telegram_message(
+                config,
+                f"[{run_date}] 승인되지 않아 오늘 다시 실행하면 재승인을 받을 수 있습니다.",
+            )
 
     except Exception as exc:
         send_telegram_message(config, f"[{run_date}] 실행 중 예외 발생: {exc}")
