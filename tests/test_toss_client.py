@@ -110,6 +110,50 @@ def test_place_market_sell_sends_quantity_unmodified():
     }
 
 
+def test_is_us_market_open_today_true_when_regular_market_present():
+    session = Mock()
+    session.request.side_effect = [
+        mock_response(200, {"access_token": "tok", "token_type": "Bearer", "expires_in": 86400}),
+        mock_response(
+            200,
+            {
+                "result": {
+                    "today": {
+                        "date": "2026-03-25",
+                        "regularMarket": {
+                            "startTime": "2026-03-25T22:30:00+09:00",
+                            "endTime": "2026-03-26T05:00:00+09:00",
+                        },
+                    }
+                }
+            },
+        ),
+    ]
+    client = make_client(session)
+
+    assert client.is_us_market_open_today() is True
+
+    calendar_call = session.request.call_args_list[1]
+    assert calendar_call.args[0] == "GET"
+    assert calendar_call.args[1] == "https://openapi.tossinvest.com/api/v1/market-calendar/US"
+    # 계좌 컨텍스트가 필요 없는 엔드포인트라 X-Tossinvest-Account 헤더가 없어야 함
+    assert "X-Tossinvest-Account" not in calendar_call.kwargs["headers"]
+
+
+def test_is_us_market_open_today_false_on_holiday():
+    session = Mock()
+    session.request.side_effect = [
+        mock_response(200, {"access_token": "tok", "token_type": "Bearer", "expires_in": 86400}),
+        mock_response(
+            200,
+            {"result": {"today": {"date": "2026-07-04", "regularMarket": None}}},
+        ),
+    ]
+    client = make_client(session)
+
+    assert client.is_us_market_open_today() is False
+
+
 def test_4xx_error_is_not_retried():
     session = Mock()
     session.request.return_value = mock_response(

@@ -36,6 +36,9 @@ class FakeTossClient:
     def __init__(self, *args, **kwargs):
         self.orders = []
 
+    def is_us_market_open_today(self):
+        return True
+
     def get_account_state(self, watchlist):
         return AccountState(positions_usd={}, daily_pnl_pct=0.0)
 
@@ -124,6 +127,35 @@ def test_circuit_breaker_blocks_orders(monkeypatch):
     )
 
     main_module.run(dry_run=False)  # 예외 없이 조기 종료되어야 함
+
+
+def test_us_market_holiday_skips_analysis_and_marks_completed(monkeypatch):
+    class ClosedMarketTossClient(FakeTossClient):
+        def is_us_market_open_today(self):
+            return False
+
+    monkeypatch.setattr(main_module, "TossClient", ClosedMarketTossClient)
+    monkeypatch.setattr(
+        main_module,
+        "run_analysis",
+        lambda ticker, run_date: (_ for _ in ()).throw(AssertionError("should not analyze")),
+    )
+
+    sent = []
+    monkeypatch.setattr(
+        main_module, "send_telegram_message", lambda config, text: sent.append(text)
+    )
+
+    main_module.run(dry_run=False)
+
+    assert any("휴장일" in text for text in sent)
+
+    conn = init_db(main_module.DB_PATH)
+    run_date = main_module.date.today().isoformat()
+    row = conn.execute(
+        "SELECT status FROM runs WHERE run_date = ?", (run_date,)
+    ).fetchone()
+    assert row[0] == "completed"
 
 
 def test_already_placed_order_is_skipped_on_retry(monkeypatch):

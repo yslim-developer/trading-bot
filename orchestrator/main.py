@@ -73,6 +73,13 @@ def run(dry_run):
         mark_run_started(conn, run_date)
 
         toss = TossClient(config.toss_client_id, config.toss_client_secret)
+
+        if not toss.is_us_market_open_today():
+            send_telegram_message(config, f"[{run_date}] 오늘은 미국 증시 휴장일 - 분석/주문을 건너뜁니다.")
+            ping_healthcheck(config)
+            mark_run_completed(conn, run_date)
+            return
+
         account = toss.get_account_state(config.watchlist)
 
         if account.daily_pnl_pct <= config.risk_limits.daily_loss_circuit_pct:

@@ -111,6 +111,14 @@ class TossClient:
         daily_pnl_pct = float(result["dailyProfitLoss"]["rate"]) * 100
         return AccountState(positions_usd=positions_usd, daily_pnl_pct=daily_pnl_pct)
 
+    def is_us_market_open_today(self):
+        body = self._request(
+            "GET",
+            "/api/v1/market-calendar/US",
+            headers={"Authorization": f"Bearer {self._get_access_token()}"},
+        )
+        return body["result"]["today"]["regularMarket"] is not None
+
     def get_holding_quantity(self, ticker):
         body = self._request(
             "GET", "/api/v1/holdings", headers=self._auth_headers(), params={"symbol": ticker}
