@@ -8,5 +8,6 @@ services:
     entrypoint: []
     volumes:
       - ./docker/run_analysis.py:/app/run_analysis.py:ro
+      - ./orchestrator/decision_mapping.py:/app/decision_mapping.py:ro
     env_file:
       - .env
