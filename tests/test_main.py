@@ -381,6 +381,29 @@ def test_toss_api_error_on_placement_aborts_remaining_orders(monkeypatch):
     assert row[0] == "completed"
 
 
+def test_mark_order_placed_retries_and_succeeds_without_failure_message(monkeypatch):
+    call_count = {"n": 0}
+
+    def flaky_mark_order_placed(conn, run_date, ticker, action, order_id):
+        call_count["n"] += 1
+        if call_count["n"] < 2:
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(main_module, "mark_order_placed", flaky_mark_order_placed)
+
+    sent = []
+    monkeypatch.setattr(
+        main_module, "send_telegram_message", lambda config, text: sent.append(text)
+    )
+
+    main_module.run(dry_run=False)
+
+    summary = "\n".join(sent)
+    assert "로컬 기록 실패" not in summary
+    # AAPL: 1번째 실패 + 재시도 성공 (2회), MSFT: 첫 시도 성공 (1회) = 총 3회
+    assert call_count["n"] == 3
+
+
 def test_mark_order_placed_failure_is_reported_distinctly(monkeypatch):
     def raising_mark_order_placed(conn, run_date, ticker, action, order_id):
         raise sqlite3.OperationalError("database is locked")
