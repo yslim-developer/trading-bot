@@ -11,3 +11,7 @@ risk_limits:
 
 schedule:
   run_time_kst: "22:40"
+
+approval:
+  enabled: false
+  timeout_minutes: 20

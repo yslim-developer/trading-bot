@@ -26,6 +26,8 @@ def make_config():
         telegram_bot_token="tok",
         telegram_chat_id="chat",
         healthcheck_ping_url="https://hc-ping.com/test123",
+        approval_enabled=False,
+        approval_timeout_minutes=20,
     )
 
 
@@ -55,6 +57,13 @@ def patch_dependencies(monkeypatch, tmp_path):
     monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: "BUY")
     monkeypatch.setattr(main_module, "send_telegram_message", lambda config, text: None)
     monkeypatch.setattr(main_module, "ping_healthcheck", lambda config, suffix="": None)
+    monkeypatch.setattr(
+        main_module,
+        "wait_for_telegram_reply",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("승인 모드가 꺼져 있으면 호출되면 안 됨")
+        ),
+    )
     monkeypatch.setattr(main_module, "DB_PATH", str(tmp_path / "trading.db"))
     monkeypatch.setattr(main_module, "STOP_FILE", str(tmp_path / "STOP"))
     monkeypatch.chdir(tmp_path)
@@ -214,6 +223,94 @@ def test_quota_exhausted_error_produces_distinct_message_and_continues(monkeypat
     )
     # 한도 초과 종목만 스킵하고 나머지는 계속 진행 (전체 중단 아님)
     assert captured_orders["buys"] == ["MSFT"]
+
+
+def make_approval_config(**overrides):
+    config = make_config()
+    config.approval_enabled = True
+    config.approval_timeout_minutes = 20
+    for key, value in overrides.items():
+        setattr(config, key, value)
+    return config
+
+
+def test_approval_mode_places_orders_when_approved(monkeypatch):
+    monkeypatch.setattr(main_module, "load_config", lambda: make_approval_config())
+    monkeypatch.setattr(main_module, "wait_for_telegram_reply", lambda config, timeout_seconds: "approved")
+
+    captured_orders = {}
+
+    class TrackingTossClient(FakeTossClient):
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            captured_orders.setdefault("buys", []).append(ticker)
+            return super().place_market_buy(ticker, amount_usd, client_order_id)
+
+    monkeypatch.setattr(main_module, "TossClient", TrackingTossClient)
+
+    main_module.run(dry_run=False)
+
+    assert captured_orders["buys"] == ["AAPL", "MSFT"]
+
+
+def test_approval_mode_skips_orders_when_rejected(monkeypatch):
+    monkeypatch.setattr(main_module, "load_config", lambda: make_approval_config())
+    monkeypatch.setattr(main_module, "wait_for_telegram_reply", lambda config, timeout_seconds: "rejected")
+
+    orders_placed = []
+
+    class TrackingTossClient(FakeTossClient):
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            orders_placed.append(ticker)
+            return super().place_market_buy(ticker, amount_usd, client_order_id)
+
+    monkeypatch.setattr(main_module, "TossClient", TrackingTossClient)
+
+    main_module.run(dry_run=False)
+
+    assert orders_placed == []
+
+    # 판단 근거는 여전히 기록되어야 함 (승인 대기와 무관하게)
+    conn = init_db(main_module.DB_PATH)
+    run_date = main_module.date.today().isoformat()
+    rows = conn.execute(
+        "SELECT ticker, approved, placed FROM orders WHERE run_date = ?", (run_date,)
+    ).fetchall()
+    assert len(rows) == 2
+    assert all(approved == 1 and placed == 0 for _, approved, placed in rows)
+
+
+def test_approval_mode_skips_orders_on_timeout(monkeypatch):
+    monkeypatch.setattr(main_module, "load_config", lambda: make_approval_config())
+    monkeypatch.setattr(main_module, "wait_for_telegram_reply", lambda config, timeout_seconds: "timeout")
+
+    orders_placed = []
+
+    class TrackingTossClient(FakeTossClient):
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            orders_placed.append(ticker)
+            return super().place_market_buy(ticker, amount_usd, client_order_id)
+
+    monkeypatch.setattr(main_module, "TossClient", TrackingTossClient)
+
+    main_module.run(dry_run=False)
+
+    assert orders_placed == []
+
+
+def test_approval_mode_not_invoked_when_nothing_approved(monkeypatch):
+    config = make_approval_config()
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: "HOLD")
+    # wait_for_telegram_reply left unpatched-by-default (raises via autouse fixture if called)
+
+    main_module.run(dry_run=False)  # 예외 없이 완료되어야 함 (승인 대기 안 탐)
+
+
+def test_approval_mode_not_invoked_during_dry_run(monkeypatch):
+    monkeypatch.setattr(main_module, "load_config", lambda: make_approval_config())
+    # wait_for_telegram_reply left unpatched-by-default (raises via autouse fixture if called)
+
+    main_module.run(dry_run=True)  # 예외 없이 완료되어야 함 (드라이런은 승인 대기 안 탐)
 
 
 def test_toss_api_error_on_placement_aborts_remaining_orders(monkeypatch):

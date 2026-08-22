@@ -17,6 +17,8 @@ class AppConfig:
     telegram_bot_token: str
     telegram_chat_id: str
     healthcheck_ping_url: str
+    approval_enabled: bool
+    approval_timeout_minutes: int
 
 
 def load_config(config_path="config.yaml", env_path=".env"):
@@ -31,6 +33,8 @@ def load_config(config_path="config.yaml", env_path=".env"):
         max_concurrent_positions=raw["risk_limits"]["max_concurrent_positions"],
     )
 
+    approval = raw.get("approval", {})
+
     return AppConfig(
         watchlist=raw["watchlist"],
         risk_limits=risk_limits,
@@ -40,4 +44,6 @@ def load_config(config_path="config.yaml", env_path=".env"):
         telegram_bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
         telegram_chat_id=os.environ["TELEGRAM_CHAT_ID"],
         healthcheck_ping_url=os.environ.get("HEALTHCHECK_PING_URL", ""),
+        approval_enabled=approval.get("enabled", False),
+        approval_timeout_minutes=approval.get("timeout_minutes", 20),
     )

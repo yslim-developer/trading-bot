@@ -3,7 +3,11 @@ import os
 from datetime import date
 
 from orchestrator.config import load_config
-from orchestrator.notifier import ping_healthcheck, send_telegram_message
+from orchestrator.notifier import (
+    ping_healthcheck,
+    send_telegram_message,
+    wait_for_telegram_reply,
+)
 from orchestrator.risk_engine import Decision, evaluate_decisions
 from orchestrator.state import (
     has_order_been_placed,
@@ -81,6 +85,28 @@ def run(dry_run):
 
         risk_results = evaluate_decisions(decisions, account, config.risk_limits)
 
+        approval_granted = True
+        if not dry_run and config.approval_enabled and any(r.approved for r in risk_results):
+            proposal_lines = [f"[{run_date}] 제안 주문 (승인 대기)"]
+            for r in risk_results:
+                if r.approved:
+                    proposal_lines.append(f"- {r.ticker} {r.action}: ${r.amount_usd:.2f}")
+            proposal_lines.append(
+                f"{config.approval_timeout_minutes}분 안에 '승인' 또는 '거부'로 답장해주세요. "
+                "무응답 시 자동 거부됩니다."
+            )
+            send_telegram_message(config, "\n".join(proposal_lines))
+
+            reply = wait_for_telegram_reply(
+                config, timeout_seconds=config.approval_timeout_minutes * 60
+            )
+            approval_granted = reply == "approved"
+            send_telegram_message(
+                config,
+                f"[{run_date}] 승인 결과: {reply} — "
+                + ("주문을 실행합니다." if approval_granted else "주문 없이 종료합니다."),
+            )
+
         summary_lines = [f"[{run_date}] 자동매매 결과{' (드라이런)' if dry_run else ''}"]
         for r in risk_results:
             record_order(conn, run_date, r.ticker, r.action, r.amount_usd, r.approved, r.reason)
@@ -88,7 +114,7 @@ def run(dry_run):
                 f"- {r.ticker} {r.action}: {'승인' if r.approved else '거부'} ({r.reason})"
             )
 
-            if not r.approved or dry_run:
+            if not r.approved or dry_run or not approval_granted:
                 continue
 
             if has_order_been_placed(conn, run_date, r.ticker, r.action):
