@@ -2,6 +2,7 @@ watchlist:
   - MSFT
   - GOOGL
   - NVDA
+  - JPM
 
 risk_limits:
   per_ticker_max_usd: 10
