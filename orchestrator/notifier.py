@@ -45,7 +45,8 @@ def wait_for_telegram_reply(config, timeout_seconds, poll_interval_seconds=5):
             resp = requests.get(url, params=params, timeout=10)
             updates = resp.json().get("result", [])
         except requests.RequestException:
-            updates = []
+            time.sleep(poll_interval_seconds)
+            continue
 
         for update in updates:
             offset = update["update_id"] + 1

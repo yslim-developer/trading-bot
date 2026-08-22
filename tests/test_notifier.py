@@ -142,6 +142,30 @@ def test_wait_for_telegram_reply_ignores_unrelated_chat_and_unrecognized_text(mo
     assert result == "approved"
 
 
+def test_wait_for_telegram_reply_does_not_treat_backlog_as_fresh_after_initial_network_failure(
+    monkeypatch,
+):
+    # 첫 폴링이 네트워크 오류로 실패해도, 그다음 폴링에서 받은 응답은 여전히
+    # "백로그"로 취급되어야 한다 (오래된 메시지를 오늘의 승인으로 오인하면 안 됨).
+    call_count = {"n": 0}
+
+    def fake_get(url, params, timeout):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise requests.RequestException("network blip")
+        if call_count["n"] == 2:
+            return make_updates_response([make_update(1, "chat-1", "승인")])  # 사실 백로그
+        return make_updates_response([])  # offset 전진 이후 재조회, 더 이상 안 옴
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    result = wait_for_telegram_reply(
+        make_config(), timeout_seconds=0.05, poll_interval_seconds=0.01
+    )
+
+    assert result == "timeout"  # 백로그를 승인으로 오인하면 안 됨
+
+
 def test_wait_for_telegram_reply_times_out_without_response(monkeypatch):
     monkeypatch.setattr(
         requests, "get", lambda url, params, timeout: make_updates_response([])
