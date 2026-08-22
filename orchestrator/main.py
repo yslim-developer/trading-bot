@@ -17,7 +17,7 @@ from orchestrator.state import (
     record_order,
 )
 from orchestrator.toss_client import TossApiError, TossClient
-from orchestrator.trading_agents_client import run_analysis
+from orchestrator.trading_agents_client import QuotaExhaustedError, run_analysis
 
 STOP_FILE = "STOP"
 DB_PATH = "data/trading.db"
@@ -67,6 +67,12 @@ def run(dry_run):
         for ticker in config.watchlist:
             try:
                 action = run_analysis(ticker, run_date)
+            except QuotaExhaustedError:
+                send_telegram_message(
+                    config,
+                    f"[{run_date}] {ticker} 분석 실패 — Gemini 일일 요청 한도 초과 (내일 자동 리셋됨)",
+                )
+                continue
             except Exception as exc:
                 send_telegram_message(config, f"[{run_date}] {ticker} 분석 실패: {exc}")
                 continue

@@ -8,6 +8,7 @@ import orchestrator.main as main_module
 from orchestrator.risk_engine import AccountState, RiskLimits
 from orchestrator.state import init_db, mark_order_placed, mark_run_started, record_order
 from orchestrator.toss_client import TossApiError
+from orchestrator.trading_agents_client import QuotaExhaustedError
 
 
 def make_config():
@@ -182,6 +183,37 @@ def test_healthcheck_pings_fail_on_unhandled_exception(monkeypatch):
         main_module.run(dry_run=False)
 
     assert pings == ["/start", "/fail"]
+
+
+def test_quota_exhausted_error_produces_distinct_message_and_continues(monkeypatch):
+    def fake_run_analysis(ticker, run_date):
+        if ticker == "AAPL":
+            raise QuotaExhaustedError(f"{ticker}: Gemini 일일 요청 한도 초과")
+        return "BUY"
+
+    monkeypatch.setattr(main_module, "run_analysis", fake_run_analysis)
+
+    sent = []
+    monkeypatch.setattr(
+        main_module, "send_telegram_message", lambda config, text: sent.append(text)
+    )
+
+    captured_orders = {}
+
+    class TrackingTossClient(FakeTossClient):
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            captured_orders.setdefault("buys", []).append(ticker)
+            return super().place_market_buy(ticker, amount_usd, client_order_id)
+
+    monkeypatch.setattr(main_module, "TossClient", TrackingTossClient)
+
+    main_module.run(dry_run=False)
+
+    assert any(
+        "Gemini 일일 요청 한도 초과" in text and "AAPL" in text for text in sent
+    )
+    # 한도 초과 종목만 스킵하고 나머지는 계속 진행 (전체 중단 아님)
+    assert captured_orders["buys"] == ["MSFT"]
 
 
 def test_toss_api_error_on_placement_aborts_remaining_orders(monkeypatch):
