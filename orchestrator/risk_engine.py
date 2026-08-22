@@ -17,6 +17,7 @@ class AccountState:
 @dataclass
 class RiskLimits:
     per_ticker_max_usd: float
+    per_ticker_max_position_usd: float  # 종목당 누적 보유금액 상한
     daily_max_buy_usd: float
     daily_loss_circuit_pct: float  # 예: -3.0 이면 -3% 이하일 때 서킷브레이커 발동
     max_concurrent_positions: int
@@ -58,7 +59,15 @@ def evaluate_decisions(decisions, account, limits):
             results.append(RiskDecision(d.ticker, d.action, 0.0, False, "max_positions"))
             continue
 
-        capped_amount = min(d.amount_usd, limits.per_ticker_max_usd, remaining_budget)
+        current_holding = account.positions_usd.get(d.ticker, 0.0)
+        remaining_position_room = limits.per_ticker_max_position_usd - current_holding
+        if remaining_position_room <= 0:
+            results.append(RiskDecision(d.ticker, d.action, 0.0, False, "position_cap_reached"))
+            continue
+
+        capped_amount = min(
+            d.amount_usd, limits.per_ticker_max_usd, remaining_budget, remaining_position_room
+        )
         if capped_amount <= 0:
             results.append(RiskDecision(d.ticker, d.action, 0.0, False, "no_budget_remaining"))
             continue

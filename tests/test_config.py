@@ -14,6 +14,7 @@ def test_load_config_parses_yaml_and_env(tmp_path, monkeypatch):
               - MSFT
             risk_limits:
               per_ticker_max_usd: 100
+              per_ticker_max_position_usd: 500
               daily_max_buy_usd: 300
               daily_loss_circuit_pct: -3.0
               max_concurrent_positions: 5
@@ -36,6 +37,7 @@ def test_load_config_parses_yaml_and_env(tmp_path, monkeypatch):
 
     assert config.watchlist == ["AAPL", "MSFT"]
     assert config.risk_limits.per_ticker_max_usd == 100
+    assert config.risk_limits.per_ticker_max_position_usd == 500
     assert config.risk_limits.daily_loss_circuit_pct == -3.0
     assert config.run_time_kst == "22:40"
     assert config.toss_client_id == "test-id"
@@ -56,6 +58,7 @@ def test_load_config_reads_optional_healthcheck_url_when_set(tmp_path, monkeypat
               - AAPL
             risk_limits:
               per_ticker_max_usd: 100
+              per_ticker_max_position_usd: 500
               daily_max_buy_usd: 300
               daily_loss_circuit_pct: -3.0
               max_concurrent_positions: 5
@@ -89,6 +92,7 @@ def test_load_config_reads_approval_section_when_present(tmp_path):
               - AAPL
             risk_limits:
               per_ticker_max_usd: 100
+              per_ticker_max_position_usd: 500
               daily_max_buy_usd: 300
               daily_loss_circuit_pct: -3.0
               max_concurrent_positions: 5

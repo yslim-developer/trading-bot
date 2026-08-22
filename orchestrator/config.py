@@ -28,6 +28,7 @@ def load_config(config_path="config.yaml", env_path=".env"):
 
     risk_limits = RiskLimits(
         per_ticker_max_usd=raw["risk_limits"]["per_ticker_max_usd"],
+        per_ticker_max_position_usd=raw["risk_limits"]["per_ticker_max_position_usd"],
         daily_max_buy_usd=raw["risk_limits"]["daily_max_buy_usd"],
         daily_loss_circuit_pct=raw["risk_limits"]["daily_loss_circuit_pct"],
         max_concurrent_positions=raw["risk_limits"]["max_concurrent_positions"],

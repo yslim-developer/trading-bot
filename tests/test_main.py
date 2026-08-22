@@ -16,6 +16,7 @@ def make_config():
         watchlist=["AAPL", "MSFT"],
         risk_limits=RiskLimits(
             per_ticker_max_usd=100.0,
+            per_ticker_max_position_usd=100000.0,
             daily_max_buy_usd=300.0,
             daily_loss_circuit_pct=-3.0,
             max_concurrent_positions=5,

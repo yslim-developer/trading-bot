@@ -9,6 +9,7 @@ from orchestrator.risk_engine import (
 def make_limits(**overrides):
     defaults = dict(
         per_ticker_max_usd=100.0,
+        per_ticker_max_position_usd=100000.0,
         daily_max_buy_usd=300.0,
         daily_loss_circuit_pct=-3.0,
         max_concurrent_positions=5,
@@ -69,6 +70,28 @@ def test_addon_buy_to_existing_position_not_blocked_by_max_positions():
     results = evaluate_decisions(decisions, account, make_limits(max_concurrent_positions=2))
 
     assert results[0].approved is True
+
+
+def test_buy_amount_capped_by_remaining_position_room():
+    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=100.0)]
+    account = AccountState(positions_usd={"AAPL": 45.0}, daily_pnl_pct=0.0)
+    results = evaluate_decisions(
+        decisions, account, make_limits(per_ticker_max_position_usd=50.0)
+    )
+
+    assert results[0].approved is True
+    assert results[0].amount_usd == 5.0
+
+
+def test_buy_rejected_when_position_cap_already_reached():
+    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=100.0)]
+    account = AccountState(positions_usd={"AAPL": 50.0}, daily_pnl_pct=0.0)
+    results = evaluate_decisions(
+        decisions, account, make_limits(per_ticker_max_position_usd=50.0)
+    )
+
+    assert results[0].approved is False
+    assert results[0].reason == "position_cap_reached"
 
 
 def test_sell_always_approved_without_amount_cap():
