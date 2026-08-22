@@ -65,17 +65,22 @@ approval:
 `scripts/run_daily.ps1`은 하루치 로그를 `logs/run-YYYY-MM-DD.log`로 남기고, 실행할 때마다 30일보다 오래된
 로그 파일을 자동으로 정리한다.
 
-## Windows 작업 스케줄러 등록 (매일 KST 22:40 실행)
+## Windows 작업 스케줄러 등록 (평일 KST 22:40 실행)
 
-PC가 예약 시각에 절전/꺼짐 상태일 수 있으므로 "놓친 시작을 최대한 빨리 실행" 옵션(`StartWhenAvailable`)을 반드시 켠다.
-`schtasks /create`는 이 옵션을 노출하지 않으므로 PowerShell로 등록한다:
+미국 증시는 주말에 휴장이므로 토·일에는 트리거 자체가 실행되지 않도록 등록한다(스크립트 안에서 요일을 걸러내는
+게 아니라, 스케줄러 트리거 단에서 막는다). PC가 예약 시각에 절전/꺼짐 상태일 수 있으므로 "놓친 시작을 최대한
+빨리 실행" 옵션(`StartWhenAvailable`)을 반드시 켠다. `schtasks /create`는 이 옵션을 노출하지 않으므로
+PowerShell로 등록한다:
 
 ```powershell
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-File E:\MyProject\scripts\run_daily.ps1"
-$trigger = New-ScheduledTaskTrigger -Daily -At 22:40
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 22:40
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
 Register-ScheduledTask -TaskName "TradingBot Daily Run" -Action $action -Trigger $trigger -Settings $settings -Force
 ```
+
+미국 공휴일(추수감사절 등 증시 휴장일)은 요일 트리거로 걸러지지 않는다 — 그런 날은 봇이 그냥 실행되고, 토스
+API가 휴장 정보를 제공하면 주문 자체가 거부/무시될 뿐 별도 처리는 하지 않는다(Phase 1 범위 밖).
 
 미국 서머타임(EDT/EST) 전환 시 `run_time_kst` 및 위 스케줄 시각을 수동으로 1시간 조정해야 한다 (Phase 1 범위 밖 자동화).
 
