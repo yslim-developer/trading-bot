@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -9,6 +10,33 @@ from tradingagents.default_config import DEFAULT_CONFIG
 # 매핑 로직을 두 곳에 따로 유지/동기화할 필요가 없다.
 from decision_mapping import normalize_decision
 
+# 종목당 여러 번 LLM을 호출하는 구조라 무료 티어 일일 한도에 걸리기 쉽다.
+# 1순위: Gemini(GOOGLE_API_KEY, 무료 티어). 2순위(선택): groq(GROQ_API_KEY,
+# 무료 오픈웨이트 모델) -- Gemini가 RESOURCE_EXHAUSTED로 실패했을 때만 자동
+# 전환한다. groq 키가 없으면 원래 예외를 그대로 전파한다(기존 동작 유지).
+PROVIDER_MODELS = {
+    "google": {
+        "deep_think_llm": "gemini-3.5-flash",
+        "quick_think_llm": "gemini-3.1-flash-lite",
+    },
+    "groq": {
+        "deep_think_llm": "openai/gpt-oss-120b",
+        "quick_think_llm": "openai/gpt-oss-20b",
+    },
+}
+
+
+def build_config(provider):
+    config = DEFAULT_CONFIG.copy()
+    config["llm_provider"] = provider
+    config.update(PROVIDER_MODELS[provider])
+    return config
+
+
+def propagate_with_provider(ticker, date, provider):
+    graph = TradingAgentsGraph(debug=False, config=build_config(provider))
+    return graph.propagate(ticker, date)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -16,24 +44,22 @@ def main():
     parser.add_argument("date")
     args = parser.parse_args()
 
-    config = DEFAULT_CONFIG.copy()
-    # Force Gemini (free-tier GOOGLE_API_KEY, see README) instead of the
-    # vendored default of OpenAI, which would fail every run with no
-    # OPENAI_API_KEY set. Explicit dict overrides here (rather than relying on
-    # TRADINGAGENTS_* env vars threading through docker-compose) are easier to
-    # verify by reading this file alone. Keys confirmed present in
-    # tradingagents/default_config.py's DEFAULT_CONFIG.
-    config["llm_provider"] = "google"
-    config["deep_think_llm"] = "gemini-3.5-flash"
-    config["quick_think_llm"] = "gemini-3.1-flash-lite"
-    graph = TradingAgentsGraph(debug=False, config=config)
-    _, raw_decision = graph.propagate(args.ticker, args.date)
+    provider_used = "google"
+    try:
+        _, raw_decision = propagate_with_provider(args.ticker, args.date, "google")
+    except Exception as exc:
+        if "RESOURCE_EXHAUSTED" in str(exc) and os.environ.get("GROQ_API_KEY"):
+            provider_used = "groq"
+            _, raw_decision = propagate_with_provider(args.ticker, args.date, "groq")
+        else:
+            raise
 
     result = {
         "ticker": args.ticker,
         "date": args.date,
         "action": normalize_decision(raw_decision),
         "raw_decision": str(raw_decision),
+        "provider": provider_used,
     }
     print(json.dumps(result))
 

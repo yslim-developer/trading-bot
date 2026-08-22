@@ -29,7 +29,8 @@ TradingAgents(docker) 분석 결과를 토스증권 오픈API로 완전자동 �
    │no
    ▼
 10. 종목별 TradingAgents 분석 (종목 하나 실패해도 나머지는 계속)
-    ├─ Gemini 일일 한도 초과 → 구분된 알림, 해당 종목만 스킵
+    ├─ Gemini 일일 한도 초과 → GROQ_API_KEY 설정 시 groq로 자동 폴백해 재시도, 그래도 없으면
+      구분된 알림 + 해당 종목만 스킵
     └─ 그 외 실패 → 일반 알림, 해당 종목만 스킵
 11. 리스크 엔진 평가 (서킷브레이커/종목당 1회 주문 한도/종목당 누적 보유 한도/일일 총 매수 한도/최대
     보유종목수 반영)
@@ -61,6 +62,7 @@ TradingAgents(docker) 분석 결과를 토스증권 오픈API로 완전자동 �
 3. `cp .env.example .env` 후 값 채우기:
    - `TOSS_CLIENT_ID`, `TOSS_CLIENT_SECRET`: 토스증권 오픈API 발급 값
    - `GOOGLE_API_KEY`: Gemini 무료 API 키 (TradingAgents 컨테이너가 사용)
+   - `GROQ_API_KEY` (선택): 아래 "LLM 폴백" 참고
    - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: 알림용 텔레그램 봇
    - `HEALTHCHECK_PING_URL` (선택): 아래 "무응답 감지" 참고
 4. `config.yaml`에서 감시 종목·리스크 한도 확인/조정
@@ -108,6 +110,19 @@ approval:
   잘못 인식되지 않는다.
 - 거부하거나 시간 안에 응답이 없으면 그날 실행이 "완료" 처리되지 않으므로, 같은 날 다시
   `python -m orchestrator.main`을 실행하면 재분석 후 다시 승인을 받을 수 있다.
+
+## LLM 폴백 (Gemini 한도 초과 시 groq로 자동 전환)
+
+Gemini 무료 티어는 하루 요청 한도가 있어(gemini-3.5-flash 기준 20회/일), 감시 종목이 늘어나면 일부 종목이
+"Gemini 일일 한도 초과"로 스킵될 수 있다. `.env`에 `GROQ_API_KEY`를 채워두면, Gemini가 한도 초과로 실패한
+종목만 자동으로 [groq](https://console.groq.com)의 무료 오픈웨이트 모델(`openai/gpt-oss-120b`/
+`openai/gpt-oss-20b`)로 재시도한다.
+
+- Gemini가 정상 응답하면 groq는 전혀 호출되지 않는다 — 순수 폴백이다.
+- `GROQ_API_KEY`가 비어 있으면 기존과 동일하게 동작한다(해당 종목 스킵 + 구분된 알림).
+- groq 계정을 여러 개 만들어 Gemini 자체를 우회하는 방식은 하지 않는다 — Google 무료 티어 약관 위반 소지가
+  있어, 대신 별도 제공자로 자연스럽게 넘어가는 방식을 택했다.
+- `docker/run_analysis.py`의 `PROVIDER_MODELS`에서 provider/모델 조합을 바꿀 수 있다.
 
 ## 로그
 

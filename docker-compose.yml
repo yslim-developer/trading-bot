@@ -14,3 +14,4 @@ services:
     # env_file 지시자와 무관하게 항상 동작하는 compose 내장 기능).
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
