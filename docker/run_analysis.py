@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -38,6 +39,21 @@ def propagate_with_provider(ticker, date, provider):
     return graph.propagate(ticker, date)
 
 
+def extract_reasoning(final_state):
+    """Portfolio Manager 최종 결정 markdown에서 Executive Summary만 뽑아낸다.
+
+    tradingagents.agents.schemas.render_pm_decision()이 만드는 markdown은
+    "**Rating**: X" 다음에 "**Executive Summary**: ..." 섹션을 항상 포함한다
+    (vendor/tradingagents/tradingagents/agents/schemas.py 확인). 형식이 다른
+    예외적인 경우에는 원문 앞부분만 잘라서 반환한다.
+    """
+    text = final_state.get("final_trade_decision") or ""
+    match = re.search(r"\*\*Executive Summary\*\*:\s*(.+?)(?:\n\n|\Z)", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text.strip()[:300]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("ticker")
@@ -46,11 +62,11 @@ def main():
 
     provider_used = "google"
     try:
-        _, raw_decision = propagate_with_provider(args.ticker, args.date, "google")
+        final_state, raw_decision = propagate_with_provider(args.ticker, args.date, "google")
     except Exception as exc:
         if "RESOURCE_EXHAUSTED" in str(exc) and os.environ.get("GROQ_API_KEY"):
             provider_used = "groq"
-            _, raw_decision = propagate_with_provider(args.ticker, args.date, "groq")
+            final_state, raw_decision = propagate_with_provider(args.ticker, args.date, "groq")
         else:
             raise
 
@@ -59,6 +75,7 @@ def main():
         "date": args.date,
         "action": normalize_decision(raw_decision),
         "raw_decision": str(raw_decision),
+        "reasoning": extract_reasoning(final_state),
         "provider": provider_used,
     }
     print(json.dumps(result))

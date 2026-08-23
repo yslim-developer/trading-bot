@@ -38,7 +38,8 @@ TradingAgents(docker) 분석 결과를 토스증권 오픈API로 완전자동 �
     최대 timeout_minutes 동안 "승인"/"거부" 답장 대기 → 결과 알림
     │(승인모드 꺼짐이거나 드라이런이거나 승인된 주문 없음)
     ▼
-13. 종목별로: 판단 근거 기록(record_order) → 알림 라인 추가
+13. 종목별로: 판단 근거 기록(record_order) → 알림 라인 추가 (TradingAgents의 Executive Summary가 있으면
+    "이유:" 줄로 같이 표시)
     ├─ 거부/드라이런/미승인 → 주문 스킵(기록은 남음. 미승인/타임아웃이면 완료 처리도 안 해서 당일 재시도 가능)
     ├─ 이미 주문 처리됨(재시도 감지) → 스킵 + 안내
     ├─ 토스 API 연결 실패 → 나머지 전부 중단(break), 구분된 알림
@@ -123,6 +124,14 @@ Gemini 무료 티어는 하루 요청 한도가 있어(gemini-3.5-flash 기준 2
 - groq 계정을 여러 개 만들어 Gemini 자체를 우회하는 방식은 하지 않는다 — Google 무료 티어 약관 위반 소지가
   있어, 대신 별도 제공자로 자연스럽게 넘어가는 방식을 택했다.
 - `docker/run_analysis.py`의 `PROVIDER_MODELS`에서 provider/모델 조합을 바꿀 수 있다.
+
+## 판단 근거 알림
+
+BUY/SELL/HOLD 각 결정마다 TradingAgents Portfolio Manager의 Executive Summary(왜 그렇게 판단했는지 요약)를
+텔레그램 알림에 같이 보낸다. `docker/run_analysis.py`가 `final_state["final_trade_decision"]` markdown에서
+`**Executive Summary**` 섹션을 뽑아 JSON의 `reasoning` 필드로 전달하고, `main.py`가 각 종목 알림 라인 아래에
+"  이유: ..."로 붙인다. 승인모드에서는 승인 대기 메시지에도 같이 표시된다. 요약을 못 찾으면(형식이 다른 경우)
+원문 앞부분을 잘라서 대신 보여준다.
 
 ## 로그
 

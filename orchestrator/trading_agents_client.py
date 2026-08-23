@@ -33,7 +33,8 @@ def run_analysis(ticker, run_date, timeout_seconds=1800):
     for line in reversed(result.stdout.strip().splitlines()):
         line = line.strip()
         if line.startswith("{"):
-            return json.loads(line)["action"]
+            payload = json.loads(line)
+            return payload["action"], payload.get("reasoning", "")
     raise ValueError(
         f"{ticker} 분석 결과에서 JSON 출력을 찾지 못했습니다: {result.stdout[-500:]}"
     )

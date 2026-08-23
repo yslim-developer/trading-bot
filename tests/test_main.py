@@ -58,7 +58,7 @@ class FakeTossClient:
 def patch_dependencies(monkeypatch, tmp_path):
     monkeypatch.setattr(main_module, "load_config", lambda: make_config())
     monkeypatch.setattr(main_module, "TossClient", FakeTossClient)
-    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: "BUY")
+    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: ("BUY", ""))
     monkeypatch.setattr(main_module, "send_telegram_message", lambda config, text: None)
     monkeypatch.setattr(main_module, "ping_healthcheck", lambda config, suffix="": None)
     monkeypatch.setattr(
@@ -98,6 +98,25 @@ def test_normal_run_places_approved_orders(monkeypatch):
     main_module.run(dry_run=False)
 
     assert captured_orders["buys"] == [("AAPL", 100.0), ("MSFT", 100.0)]
+
+
+def test_telegram_summary_includes_ai_reasoning(monkeypatch):
+    monkeypatch.setattr(
+        main_module,
+        "run_analysis",
+        lambda ticker, run_date: ("BUY", f"{ticker} 실적 모멘텀 강함"),
+    )
+
+    sent = []
+    monkeypatch.setattr(
+        main_module, "send_telegram_message", lambda config, text: sent.append(text)
+    )
+
+    main_module.run(dry_run=False)
+
+    summary = "\n".join(sent)
+    assert "AAPL 실적 모멘텀 강함" in summary
+    assert "MSFT 실적 모멘텀 강함" in summary
 
 
 def test_dry_run_does_not_place_orders(monkeypatch):
@@ -231,7 +250,7 @@ def test_quota_exhausted_error_produces_distinct_message_and_continues(monkeypat
     def fake_run_analysis(ticker, run_date):
         if ticker == "AAPL":
             raise QuotaExhaustedError(f"{ticker}: Gemini 일일 요청 한도 초과")
-        return "BUY"
+        return "BUY", ""
 
     monkeypatch.setattr(main_module, "run_analysis", fake_run_analysis)
 
@@ -370,7 +389,7 @@ def test_approval_mode_rejection_allows_same_day_retry(monkeypatch):
 def test_approval_mode_not_invoked_when_nothing_approved(monkeypatch):
     config = make_approval_config()
     monkeypatch.setattr(main_module, "load_config", lambda: config)
-    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: "HOLD")
+    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: ("HOLD", ""))
     # wait_for_telegram_reply left unpatched-by-default (raises via autouse fixture if called)
 
     main_module.run(dry_run=False)  # 예외 없이 완료되어야 함 (승인 대기 안 탐)
@@ -476,7 +495,7 @@ def test_sell_flow_places_order_with_holding_quantity(monkeypatch):
     monkeypatch.setattr(
         main_module,
         "run_analysis",
-        lambda ticker, run_date: "SELL" if ticker == "AAPL" else "HOLD",
+        lambda ticker, run_date: ("SELL", "") if ticker == "AAPL" else ("HOLD", ""),
     )
 
     main_module.run(dry_run=False)

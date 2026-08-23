@@ -110,3 +110,23 @@ def test_hold_never_approved():
 
     assert results[0].approved is False
     assert results[0].reason == "hold"
+
+
+def test_reasoning_passes_through_unchanged_for_every_action():
+    decisions = [
+        Decision(ticker="AAPL", action="BUY", amount_usd=10.0, reasoning="AI 근거 BUY"),
+        Decision(ticker="MSFT", action="SELL", amount_usd=0.0, reasoning="AI 근거 SELL"),
+        Decision(ticker="GOOGL", action="HOLD", amount_usd=0.0, reasoning="AI 근거 HOLD"),
+    ]
+    account = AccountState(positions_usd={"MSFT": 100.0}, daily_pnl_pct=0.0)
+    results = evaluate_decisions(decisions, account, make_limits())
+
+    assert [r.reasoning for r in results] == ["AI 근거 BUY", "AI 근거 SELL", "AI 근거 HOLD"]
+
+
+def test_reasoning_passes_through_even_when_circuit_breaker_blocks_everything():
+    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=10.0, reasoning="AI 근거")]
+    account = AccountState(positions_usd={}, daily_pnl_pct=-5.0)
+    results = evaluate_decisions(decisions, account, make_limits())
+
+    assert results[0].reasoning == "AI 근거"

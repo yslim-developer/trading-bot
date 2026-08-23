@@ -99,7 +99,7 @@ def run(dry_run):
         decisions = []
         for ticker in config.watchlist:
             try:
-                action = run_analysis(ticker, run_date)
+                action, reasoning = run_analysis(ticker, run_date)
             except QuotaExhaustedError:
                 send_telegram_message(
                     config,
@@ -110,7 +110,9 @@ def run(dry_run):
                 send_telegram_message(config, f"[{run_date}] {ticker} 분석 실패: {exc}")
                 continue
             amount = config.risk_limits.per_ticker_max_usd if action == "BUY" else 0.0
-            decisions.append(Decision(ticker=ticker, action=action, amount_usd=amount))
+            decisions.append(
+                Decision(ticker=ticker, action=action, amount_usd=amount, reasoning=reasoning)
+            )
 
         risk_results = evaluate_decisions(decisions, account, config.risk_limits)
 
@@ -120,6 +122,8 @@ def run(dry_run):
             for r in risk_results:
                 if r.approved:
                     proposal_lines.append(f"- {r.ticker} {r.action}: ${r.amount_usd:.2f}")
+                    if r.reasoning:
+                        proposal_lines.append(f"  이유: {r.reasoning}")
             proposal_lines.append(
                 f"{config.approval_timeout_minutes}분 안에 '승인' 또는 '거부'로 답장해주세요. "
                 "무응답 시 자동 거부됩니다."
@@ -142,6 +146,8 @@ def run(dry_run):
             summary_lines.append(
                 f"- {r.ticker} {r.action}: {'승인' if r.approved else '거부'} ({r.reason})"
             )
+            if r.reasoning:
+                summary_lines.append(f"  이유: {r.reasoning}")
 
             if not r.approved or dry_run or not approval_granted:
                 continue

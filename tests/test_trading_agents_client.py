@@ -28,12 +28,13 @@ def test_normalize_decision(raw, expected):
     assert normalize_decision(raw) == expected
 
 
-def test_run_analysis_parses_last_json_line(monkeypatch):
+def test_run_analysis_parses_last_json_line_with_reasoning(monkeypatch):
     fake_result = Mock()
     fake_result.stdout = (
         "some noisy log line\n"
         "another log line\n"
-        '{"ticker": "AAPL", "date": "2026-08-21", "action": "BUY", "raw_decision": "BUY"}\n'
+        '{"ticker": "AAPL", "date": "2026-08-21", "action": "BUY", '
+        '"raw_decision": "BUY", "reasoning": "강한 실적 모멘텀"}\n'
     )
 
     def fake_run(cmd, capture_output, text, encoding, errors, timeout, check):
@@ -46,9 +47,23 @@ def test_run_analysis_parses_last_json_line(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    action = run_analysis("AAPL", "2026-08-21")
+    action, reasoning = run_analysis("AAPL", "2026-08-21")
 
     assert action == "BUY"
+    assert reasoning == "강한 실적 모멘텀"
+
+
+def test_run_analysis_defaults_reasoning_to_empty_string_when_missing(monkeypatch):
+    fake_result = Mock()
+    fake_result.stdout = (
+        '{"ticker": "AAPL", "date": "2026-08-21", "action": "HOLD", "raw_decision": "Hold"}\n'
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: fake_result)
+
+    action, reasoning = run_analysis("AAPL", "2026-08-21")
+
+    assert action == "HOLD"
+    assert reasoning == ""
 
 
 def test_run_analysis_raises_when_no_json_found(monkeypatch):
