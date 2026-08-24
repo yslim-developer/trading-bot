@@ -1,0 +1,4 @@
+# scripts/backtest_risk_engine.py 전용 -- 프로덕션 봇 실행에는 필요 없다.
+# 무거운 의존성(numba/scipy/matplotlib 등)이 딸려오므로 requirements.txt와 분리했다.
+vectorbt==1.1.0
+yfinance==1.6.0
