@@ -167,15 +167,11 @@ def run(dry_run):
                     if float(sold_quantity) > 0:
                         result = toss.place_market_sell(r.ticker, sold_quantity, client_order_id)
             except TossApiError as exc:
-                # Order was never confirmed placed. Per design doc, a Toss API
-                # auth/connection failure aborts the whole run (unlike a
-                # per-ticker analysis failure, which is isolated) rather than
-                # producing N confusing "주문 실패" lines for what's really
-                # one broker outage.
-                summary_lines.append(
-                    f"[{run_date}] 토스 API 연결 실패 - 나머지 주문을 중단합니다: {exc}"
-                )
-                break
+                # Order was never confirmed placed. Isolated to this ticker so
+                # one rejected/failed order (e.g. insufficient funds, invalid
+                # symbol) doesn't block the remaining tickers' orders.
+                summary_lines.append(f"  주문 실패 (토스 API 오류): {exc}")
+                continue
             except Exception as exc:
                 summary_lines.append(f"  주문 실패: {exc}")
                 continue

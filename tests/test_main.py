@@ -402,7 +402,7 @@ def test_approval_mode_not_invoked_during_dry_run(monkeypatch):
     main_module.run(dry_run=True)  # 예외 없이 완료되어야 함 (드라이런은 승인 대기 안 탐)
 
 
-def test_toss_api_error_on_placement_aborts_remaining_orders(monkeypatch):
+def test_toss_api_error_on_placement_does_not_abort_remaining_orders(monkeypatch):
     attempted = []
 
     class FailingTossClient(FakeTossClient):
@@ -417,11 +417,12 @@ def test_toss_api_error_on_placement_aborts_remaining_orders(monkeypatch):
         main_module, "send_telegram_message", lambda config, text: sent.append(text)
     )
 
-    main_module.run(dry_run=False)  # 예외 없이 조기 종료되어야 함 (전체 중단이지 크래시가 아님)
+    main_module.run(dry_run=False)  # 예외 없이 완료되어야 함
 
-    # watchlist == ["AAPL", "MSFT"]; only the first ticker's placement should be attempted
-    assert attempted == ["AAPL"]
-    assert any("토스 API 연결 실패" in text and "나머지 주문을 중단" in text for text in sent)
+    # watchlist == ["AAPL", "MSFT"]; a failure on the first ticker must not
+    # stop the second ticker's order from being attempted
+    assert attempted == ["AAPL", "MSFT"]
+    assert any("주문 실패" in text and "토스 API 오류" in text for text in sent)
 
     conn = init_db(main_module.DB_PATH)
     run_date = main_module.date.today().isoformat()

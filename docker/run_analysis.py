@@ -30,6 +30,7 @@ PROVIDER_MODELS = {
 def build_config(provider):
     config = DEFAULT_CONFIG.copy()
     config["llm_provider"] = provider
+    config["output_language"] = "Korean"
     config.update(PROVIDER_MODELS[provider])
     return config
 
