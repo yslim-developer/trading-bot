@@ -86,6 +86,11 @@ ETF(PSQ)를 매수**한다. "risk-on"으로 복귀하면 인버스를 매도하�
           2. set_regime(conn, "risk_on", run_date), pending_inverse_buy = 0
           3. 그 다음 기존 10~13단계 정상 진행
              (이전 롱 포트폴리오 복원 안 함 — TradingAgents가 처음부터 재구성)
+             ※ PSQ 매도대금 미결제로 당일 롱 매수가 "매수여력 부족"이면,
+               기존 per-order 격리로 해당 종목만 스킵되고 다음 실행에서
+               TradingAgents가 다시 돌며 매수한다. risk_off 쪽의
+               pending_inverse_buy 같은 명시적 플래그는 두지 않는다
+               (자동 복구 경로가 이미 존재, 불필요한 복잡도).
       - 이미 risk_on 상태였음:
           기존 흐름 그대로
 
@@ -292,7 +297,9 @@ yfinance는 목킹한다 (고정 OHLCV 시리즈 픽스처). 프레임워크·�
 2. **PSQ 변동성 소실** — 1x라 작지만 장기 횡보 risk_off 구간에서 손실.
 3. **yfinance 의존** — 무료 소스라 스키마 변경/차단 리스크. fail-safe(이전
    레짐 유지)로 방어하나 장기 장애 시 스위치 먹통.
-4. **미국장 결제 타이밍** — pending 플래그로 대응하나 최악의 경우 하루 노출 공백.
+4. **미국장 결제 타이밍** — risk_off 쪽은 pending_inverse_buy 플래그로,
+   risk_on 쪽은 기존 per-order 격리 + 다음날 재시도로 대응하나, 최악의
+   경우 각각 하루 노출 공백.
 5. **비-나스닥 종목(JPM)도 QQQ 신호로 매도** — "완전 스위치" 선택의 트레이드오프.
 
 ## 미해결 / 구현 시 확정할 것
