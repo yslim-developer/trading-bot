@@ -6,6 +6,7 @@ import pytest
 
 import orchestrator.main as main_module
 import orchestrator.state as state_module
+from orchestrator.config import RegimeSwitchConfig
 from orchestrator.risk_engine import AccountState, RiskLimits
 from orchestrator.state import init_db, mark_order_placed, mark_run_started, record_order
 from orchestrator.toss_client import TossApiError
@@ -30,6 +31,7 @@ def make_config():
         healthcheck_ping_url="https://hc-ping.com/test123",
         approval_enabled=False,
         approval_timeout_minutes=20,
+        regime_switch=RegimeSwitchConfig(enabled=False),
     )
 
 
@@ -49,6 +51,9 @@ class FakeTossClient:
 
     def get_holding_quantity(self, ticker):
         return "0"
+
+    def get_purchasing_power_usd(self):
+        return 1000.0
 
     def place_market_sell(self, ticker, quantity, client_order_id):
         self.orders.append(("SELL", ticker, quantity))
@@ -514,3 +519,57 @@ def test_sell_flow_places_order_with_holding_quantity(monkeypatch):
         (run_date, "AAPL"),
     ).fetchone()
     assert row == ("sell-1", 1, "3.5")
+
+
+def test_regime_disabled_does_not_call_regime_module(monkeypatch, tmp_path):
+    called = {"fetch": False}
+
+    def fake_fetch(*a, **k):
+        called["fetch"] = True
+        return None
+
+    monkeypatch.setattr("orchestrator.regime.fetch_regime_data", fake_fetch)
+    main_module.run(dry_run=True)
+    assert called["fetch"] is False
+
+
+def test_regime_data_failure_keeps_long_flow(monkeypatch, tmp_path):
+    cfg = make_config()
+    cfg.regime_switch.enabled = True
+    monkeypatch.setattr(main_module, "load_config", lambda: cfg)
+    monkeypatch.setattr("orchestrator.regime.fetch_regime_data", lambda *a, **k: None)
+
+    ran = []
+    monkeypatch.setattr(
+        main_module, "run_analysis",
+        lambda ticker, run_date: ran.append(ticker) or ("HOLD", ""),
+    )
+    main_module.run(dry_run=False)
+    assert ran == ["AAPL", "MSFT"]  # 데이터 실패해도 롱 흐름 정상 진행
+
+
+def test_regime_risk_off_transition_skips_long_analysis(monkeypatch, tmp_path):
+    cfg = make_config()
+    cfg.regime_switch.enabled = True
+    monkeypatch.setattr(main_module, "load_config", lambda: cfg)
+
+    from orchestrator.regime import RegimeData
+    monkeypatch.setattr(
+        "orchestrator.regime.fetch_regime_data",
+        lambda *a, **k: RegimeData(qqq_close=90.0, sma200=100.0, sma50=95.0, vix=30.0),
+    )
+    analysis_calls = []
+    monkeypatch.setattr(
+        main_module, "run_analysis",
+        lambda ticker, run_date: analysis_calls.append(ticker) or ("BUY", ""),
+    )
+
+    # confirm_days defaults to 2: first run records 1 risk_off signal (no transition),
+    # second run records the 2nd and transitions -> long analysis skipped that run.
+    main_module.run(dry_run=False)
+    first_run_calls = list(analysis_calls)
+    analysis_calls.clear()
+    main_module.run(dry_run=False)
+
+    assert first_run_calls == ["AAPL", "MSFT"]   # run 1: not yet confirmed, normal flow
+    assert analysis_calls == []                   # run 2: transitioned to risk_off, skipped

@@ -8,8 +8,11 @@ from orchestrator.notifier import (
     send_telegram_message,
     wait_for_telegram_reply,
 )
+from orchestrator import regime as regime_module
 from orchestrator.risk_engine import Decision, evaluate_decisions
 from orchestrator.state import (
+    count_consecutive_signal,
+    get_current_regime,
     has_order_been_placed,
     has_run_completed_today,
     init_db,
@@ -19,12 +22,62 @@ from orchestrator.state import (
     mark_run_completed,
     mark_run_started,
     record_order,
+    record_regime_signal,
 )
 from orchestrator.toss_client import TossApiError, TossClient
 from orchestrator.trading_agents_client import QuotaExhaustedError, run_analysis
 
 STOP_FILE = "STOP"
 DB_PATH = "data/trading.db"
+
+
+def _handle_regime(conn, toss, config, run_date, account, dry_run):
+    """8.5단계: 레짐 판정 + 스위치.
+
+    반환: True 이면 이 실행은 레짐 스위치로 완결됨 (롱 분석/주문 단계를 건너뜀).
+          False 이면 호출부가 기존 롱 흐름을 계속 진행.
+    """
+    rs = config.regime_switch
+    prev_regime, pending = get_current_regime(conn)
+
+    data = regime_module.fetch_regime_data(rs.proxy_ticker, rs.sma_long, rs.sma_short)
+
+    if data is None:
+        send_telegram_message(
+            config,
+            f"[{run_date}] 레짐 판정 스킵 (데이터 조회 실패) — 이전 레짐({prev_regime}) 유지",
+        )
+        new_regime, transitioned = prev_regime, False
+        lines = [f"[{run_date}] 레짐: {prev_regime} (데이터 없음)"]
+    else:
+        raw_off, raw_on = regime_module.compute_raw_signals(data, rs.vix_threshold)
+        record_regime_signal(
+            conn, run_date, raw_off, raw_on,
+            data.qqq_close, data.sma200, data.sma50, data.vix,
+        )
+        off_streak = count_consecutive_signal(conn, run_date, "risk_off")
+        on_streak = count_consecutive_signal(conn, run_date, "risk_on")
+        new_regime, transitioned = regime_module.evaluate_regime(
+            prev_regime, off_streak, on_streak, rs.confirm_days
+        )
+        vix_str = f"{data.vix:.1f}" if data.vix is not None else "N/A"
+        head = f"[{run_date}] 레짐: {new_regime}"
+        if transitioned:
+            head += f" (전환: {prev_regime}→{new_regime})"
+        lines = [head, f"  QQQ {data.qqq_close:.0f} / 200일선 {data.sma200:.0f} / VIX {vix_str}"]
+
+    if new_regime == "risk_off":
+        lines += regime_module.execute_switch_to_off(
+            conn, toss, config, run_date, config.watchlist, account.positions_usd,
+            dry_run, transitioned, pending,
+        )
+        send_telegram_message(config, "\n".join(lines))
+        return True
+
+    if transitioned:  # risk_off -> risk_on
+        regime_module.execute_switch_to_on(conn, toss, config, run_date, dry_run, lines)
+    send_telegram_message(config, "\n".join(lines))
+    return False
 
 
 def run(dry_run):
@@ -64,6 +117,13 @@ def run(dry_run):
 
         if account.daily_pnl_pct <= config.risk_limits.daily_loss_circuit_pct:
             mark_circuit_breaker_triggered(conn, run_date)
+
+        if config.regime_switch.enabled:
+            if _handle_regime(conn, toss, config, run_date, account, dry_run):
+                ping_healthcheck(config)
+                if not dry_run:
+                    mark_run_completed(conn, run_date)
+                return
 
         if is_circuit_breaker_triggered_today(conn, run_date):
             send_telegram_message(
