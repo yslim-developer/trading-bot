@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import orchestrator.main as main_module
+import orchestrator.state as state_module
 from orchestrator.risk_engine import AccountState, RiskLimits
 from orchestrator.state import init_db, mark_order_placed, mark_run_started, record_order
 from orchestrator.toss_client import TossApiError
@@ -441,7 +442,7 @@ def test_mark_order_placed_retries_and_succeeds_without_failure_message(monkeypa
         if call_count["n"] < 2:
             raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(main_module, "mark_order_placed", flaky_mark_order_placed)
+    monkeypatch.setattr(state_module, "mark_order_placed", flaky_mark_order_placed)
 
     sent = []
     monkeypatch.setattr(
@@ -460,7 +461,7 @@ def test_mark_order_placed_failure_is_reported_distinctly(monkeypatch):
     def raising_mark_order_placed(conn, run_date, ticker, action, order_id, quantity=None):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(main_module, "mark_order_placed", raising_mark_order_placed)
+    monkeypatch.setattr(state_module, "mark_order_placed", raising_mark_order_placed)
 
     sent = []
     monkeypatch.setattr(

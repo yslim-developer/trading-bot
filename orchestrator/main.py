@@ -1,6 +1,5 @@
 import argparse
 import os
-import time
 from datetime import date
 
 from orchestrator.config import load_config
@@ -16,7 +15,7 @@ from orchestrator.state import (
     init_db,
     is_circuit_breaker_triggered_today,
     mark_circuit_breaker_triggered,
-    mark_order_placed,
+    mark_order_placed_with_retry,
     mark_run_completed,
     mark_run_started,
     record_order,
@@ -26,27 +25,6 @@ from orchestrator.trading_agents_client import QuotaExhaustedError, run_analysis
 
 STOP_FILE = "STOP"
 DB_PATH = "data/trading.db"
-
-
-def _mark_order_placed_with_retry(
-    conn, run_date, ticker, action, order_id, quantity=None, attempts=3, delay_seconds=0.2
-):
-    """mark_order_placed를 몇 번 재시도한다.
-
-    체결 직후 로컬 DB 기록 실패는 대개 일시적(락 경합 등)이라, 몇 번의 짧은
-    재시도로 조용히 성공하는 경우가 많다. 재시도가 모두 실패하면 마지막
-    예외를 그대로 전파해 호출부가 "체결됐으나 로컬 기록 실패" 알림을 보내게 한다.
-    """
-    last_exc = None
-    for attempt in range(attempts):
-        try:
-            mark_order_placed(conn, run_date, ticker, action, order_id, quantity=quantity)
-            return
-        except Exception as exc:
-            last_exc = exc
-            if attempt < attempts - 1:
-                time.sleep(delay_seconds)
-    raise last_exc
 
 
 def run(dry_run):
@@ -180,7 +158,7 @@ def run(dry_run):
                 continue
 
             try:
-                _mark_order_placed_with_retry(
+                mark_order_placed_with_retry(
                     conn, run_date, r.ticker, r.action, result["orderId"],
                     quantity=sold_quantity if r.action == "SELL" else None,
                 )

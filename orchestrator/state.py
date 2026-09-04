@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from datetime import date, datetime
 
 
@@ -115,6 +116,27 @@ def mark_order_placed(conn, run_date, ticker, action, order_id, quantity=None):
         (order_id, quantity, run_date, ticker, action),
     )
     conn.commit()
+
+
+def mark_order_placed_with_retry(
+    conn, run_date, ticker, action, order_id, quantity=None, attempts=3, delay_seconds=0.2
+):
+    """mark_order_placed를 몇 번 재시도한다.
+
+    체결 직후 로컬 DB 기록 실패는 대개 일시적(락 경합 등)이라, 몇 번의 짧은
+    재시도로 조용히 성공하는 경우가 많다. 재시도가 모두 실패하면 마지막
+    예외를 그대로 전파해 호출부가 "체결됐으나 로컬 기록 실패" 알림을 보내게 한다.
+    """
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            mark_order_placed(conn, run_date, ticker, action, order_id, quantity=quantity)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt < attempts - 1:
+                time.sleep(delay_seconds)
+    raise last_exc
 
 
 def has_order_been_placed(conn, run_date, ticker, action):

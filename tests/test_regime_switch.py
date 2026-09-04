@@ -122,3 +122,125 @@ def test_switch_to_on_dry_run_no_orders_no_state_change(conn):
     regime.execute_switch_to_on(conn, toss, _C(_cfg()), "2026-09-03", dry_run=True, lines=[])
     assert toss.orders == []
     assert get_current_regime(conn) == ("risk_off", 0)
+
+
+# --- Important 2: all sells fail must not trigger a full-size inverse buy ---
+
+def test_switch_to_off_all_sells_fail_defers_inverse_buy(conn):
+    class DeadToss(FakeToss):
+        def place_market_sell(self, ticker, quantity, client_order_id):
+            raise RuntimeError("rejected")
+
+    toss = DeadToss(holdings={"MSFT": 2, "MU": 5}, purchasing_power=1000.0)
+    lines = regime.execute_switch_to_off(
+        conn, toss, _C(_cfg()), "2026-09-03", ["MSFT", "MU"], {"MSFT": 60.0, "MU": 40.0},
+        dry_run=False, transitioned=True, pending=0,
+    )
+    assert not any(o[0] == "BUY" for o in toss.orders)
+    assert get_current_regime(conn) == ("risk_off", 1)
+    assert any("매도 미완료" in ln for ln in lines)
+
+
+# --- Important 3: switch_to_on must not strand the inverse position on error ---
+
+def test_switch_to_on_holding_fetch_fails_keeps_regime_off(conn):
+    from orchestrator.state import set_regime
+    set_regime(conn, "risk_off", "2026-09-01")
+
+    class BlindToss(FakeToss):
+        def get_holding_quantity(self, ticker):
+            raise RuntimeError("api down")
+
+    toss = BlindToss(holdings={"PSQ": 30})
+    lines = []
+    regime.execute_switch_to_on(conn, toss, _C(_cfg()), "2026-09-03", dry_run=False, lines=lines)
+    assert toss.orders == []
+    assert get_current_regime(conn) == ("risk_off", 0)
+
+
+def test_switch_to_on_sell_raises_keeps_regime_off(conn):
+    from orchestrator.state import set_regime
+    set_regime(conn, "risk_off", "2026-09-01")
+
+    class FlakyToss(FakeToss):
+        def place_market_sell(self, ticker, quantity, client_order_id):
+            raise RuntimeError("boom")
+
+    toss = FlakyToss(holdings={"PSQ": 30})
+    lines = []
+    regime.execute_switch_to_on(conn, toss, _C(_cfg()), "2026-09-03", dry_run=False, lines=lines)
+    assert get_current_regime(conn) == ("risk_off", 0)
+    assert any("레짐 전환 보류" in ln for ln in lines)
+
+
+def test_switch_to_on_flat_position_still_flips_regime(conn):
+    from orchestrator.state import set_regime
+    set_regime(conn, "risk_off", "2026-09-01")
+    toss = FakeToss(holdings={})
+    regime.execute_switch_to_on(conn, toss, _C(_cfg()), "2026-09-03", dry_run=False, lines=[])
+    assert toss.orders == []
+    assert get_current_regime(conn) == ("risk_on", 0)
+
+
+# --- Important 1: ledger-write failure stays isolated, does not double-order ---
+
+def test_switch_to_off_ledger_write_failure_is_isolated(conn, monkeypatch):
+    def boom(*a, **kw):
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(regime, "mark_order_placed_with_retry", boom)
+    toss = FakeToss(holdings={"MSFT": 2, "MU": 5}, purchasing_power=1000.0)
+    lines = regime.execute_switch_to_off(
+        conn, toss, _C(_cfg()), "2026-09-03", ["MSFT", "MU"], {"MSFT": 60.0, "MU": 40.0},
+        dry_run=False, transitioned=True, pending=0,
+    )
+    # both sells + buy attempted despite every ledger write failing (isolation held)
+    assert ("SELL", "MSFT", "2") in toss.orders
+    assert ("SELL", "MU", "5") in toss.orders
+    assert ("BUY", "PSQ", 90.0) in toss.orders
+    assert sum("수동 확인 필요" in ln for ln in lines) == 3
+    # buy recorded-failure: pending left as-is (still 1) so operator resolves manually
+    assert get_current_regime(conn) == ("risk_off", 1)
+
+
+# --- Minor 4: extra coverage ---
+
+def test_switch_to_off_hold_branch_no_orders(conn):
+    from orchestrator.state import set_regime
+    set_regime(conn, "risk_off", "2026-09-01")
+    toss = FakeToss(holdings={"PSQ": 30}, purchasing_power=500.0)
+    lines = regime.execute_switch_to_off(
+        conn, toss, _C(_cfg()), "2026-09-03", ["MSFT"], {},
+        dry_run=False, transitioned=False, pending=0,
+    )
+    assert toss.orders == []
+    assert get_current_regime(conn) == ("risk_off", 0)
+    assert any("주문 없음" in ln for ln in lines)
+
+
+def test_attempt_inverse_buy_skips_when_already_placed(conn):
+    from orchestrator.state import set_regime, set_pending_inverse_buy, mark_order_placed, record_order
+    set_regime(conn, "risk_off", "2026-09-02")
+    set_pending_inverse_buy(conn, 1)
+    record_order(conn, "2026-09-03", "PSQ", "BUY", 100.0, True, "regime_switch:inverse_buy")
+    mark_order_placed(conn, "2026-09-03", "PSQ", "BUY", "b-PSQ")
+    toss = FakeToss(holdings={}, purchasing_power=200.0)
+    regime.execute_switch_to_off(
+        conn, toss, _C(_cfg()), "2026-09-03", ["MSFT"], {},
+        dry_run=False, transitioned=False, pending=1,
+    )
+    assert toss.orders == []
+    assert get_current_regime(conn) == ("risk_off", 0)  # pending cleared
+
+
+def test_switch_to_off_writes_orders_table(conn):
+    toss = FakeToss(holdings={"MSFT": 2}, purchasing_power=1000.0)
+    regime.execute_switch_to_off(
+        conn, toss, _C(_cfg()), "2026-09-03", ["MSFT"], {"MSFT": 60.0},
+        dry_run=False, transitioned=True, pending=0,
+    )
+    rows = conn.execute(
+        "SELECT ticker, action, amount_usd, reason, placed FROM orders ORDER BY id"
+    ).fetchall()
+    assert ("MSFT", "SELL", 0.0, "regime_switch:on->off", 1) in rows
+    assert ("PSQ", "BUY", 54.0, "regime_switch:inverse_buy", 1) in rows  # min(1000,60)*0.9

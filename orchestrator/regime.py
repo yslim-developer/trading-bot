@@ -11,7 +11,7 @@ import yfinance as yf
 
 from orchestrator.state import (
     has_order_been_placed,
-    mark_order_placed,
+    mark_order_placed_with_retry,
     record_order,
     set_pending_inverse_buy,
     set_regime,
@@ -117,12 +117,21 @@ def _sell_one(conn, toss, ticker, run_date, positions_usd, dry_run, lines, reaso
     except Exception as exc:
         lines.append(f"  {ticker} 매도 실패: {exc}")
         return 0.0
-    mark_order_placed(conn, run_date, ticker, "SELL", result["orderId"], quantity=qty)
-    lines.append(f"  {ticker} {qty}주 매도 (order {result['orderId']})")
+    try:
+        mark_order_placed_with_retry(conn, run_date, ticker, "SELL", result["orderId"], quantity=qty)
+        lines.append(f"  {ticker} {qty}주 매도 (order {result['orderId']})")
+    except Exception:
+        # 체결은 됐고(현금 확보됨) 로컬 기록만 실패 - 재시도로 재매도되면 안 되므로
+        # 예외를 삼켜 종목 격리를 지키고, 매도합에는 포함시킨다(캡 계산용).
+        lines.append(
+            f"  {ticker} 주문은 체결됐으나 로컬 기록 실패 (order_id={result['orderId']}) - 수동 확인 필요"
+        )
     return positions_usd.get(ticker, 0.0)
 
 
-def _attempt_inverse_buy(conn, toss, config, run_date, sold_total, dry_run, lines):
+def _attempt_inverse_buy(conn, toss, config, run_date, cap, dry_run, lines):
+    """인버스 ETF 매수. cap 은 매수 산정 기준 상한(USD), None 이면 매수가능금액 전액 기준
+    (전이 후 pending 재시도 전용)."""
     rs = config.regime_switch
     inv = rs.inverse_ticker
     if has_order_been_placed(conn, run_date, inv, "BUY"):
@@ -135,10 +144,13 @@ def _attempt_inverse_buy(conn, toss, config, run_date, sold_total, dry_run, line
     except Exception as exc:
         lines.append(f"  매수가능금액 조회 실패: {exc} - {inv} 매수 보류")
         return
-    budget = min(pp, sold_total) if sold_total > 0 else pp
+    budget = pp if cap is None else min(pp, cap)
     deploy = budget * rs.max_deploy_pct / 100.0
     if deploy < MIN_ORDER_USD:
-        lines.append(f"  매수가능금액 부족 (${pp:.2f}) - {inv} 매수는 결제 후 다음 실행에서")
+        cap_str = f"${pp:.2f}" if cap is None else f"${cap:.2f}"
+        lines.append(
+            f"  매수 규모 부족 (가능금액 ${pp:.2f}, 상한 {cap_str}) - {inv} 매수는 결제 후 다음 실행에서"
+        )
         return
 
     record_order(conn, run_date, inv, "BUY", deploy, True, "regime_switch:inverse_buy")
@@ -151,7 +163,16 @@ def _attempt_inverse_buy(conn, toss, config, run_date, sold_total, dry_run, line
     except Exception as exc:
         lines.append(f"  {inv} 매수 실패: {exc} - 다음 실행에서 재시도")
         return
-    mark_order_placed(conn, run_date, inv, "BUY", result["orderId"])
+    try:
+        mark_order_placed_with_retry(conn, run_date, inv, "BUY", result["orderId"])
+    except Exception:
+        # 실제 매수는 체결됐으나 로컬 기록 실패. pending 을 그대로 두면 다음 실행에서
+        # has_order_been_placed 가 False 라 이중 매수 위험, 0 으로 내려도 미기록 상태.
+        # 어느 쪽도 안전하지 않으므로 pending 은 건드리지 않고 운영자 수동 확인에 맡긴다.
+        lines.append(
+            f"  {inv} 주문은 체결됐으나 로컬 기록 실패 (order_id={result['orderId']}) - 수동 확인 필요"
+        )
+        return
     set_pending_inverse_buy(conn, 0)
     lines.append(f"  {inv} ${deploy:.2f} 매수 (order {result['orderId']})")
 
@@ -176,23 +197,32 @@ def execute_switch_to_off(conn, toss, config, run_date, watchlist, positions_usd
         if not dry_run:
             set_regime(conn, "risk_off", run_date)
             set_pending_inverse_buy(conn, 1)
-        _attempt_inverse_buy(conn, toss, config, run_date, sold_total, dry_run, lines)
+        if watchlist and sold_total <= 0:
+            # 매도가 하나도 성사되지 않음 - 롱을 아직 다 들고 있으므로 인버스를 사면
+            # 이중 노출. 매수는 건너뛰고 pending=1 을 유지해 다음 실행에서 재시도.
+            lines.append("  매도 미완료 - 인버스 매수 보류 (다음 실행 재시도)")
+        else:
+            _attempt_inverse_buy(conn, toss, config, run_date, sold_total, dry_run, lines)
     elif pending:
         lines.append(f"  {rs.inverse_ticker} 매수 재시도 (이전 실행에서 보류됨)")
-        _attempt_inverse_buy(conn, toss, config, run_date, 0.0, dry_run, lines)
+        _attempt_inverse_buy(conn, toss, config, run_date, None, dry_run, lines)
     else:
         lines.append("  risk_off 유지 - 주문 없음")
     return lines
 
 
 def execute_switch_to_on(conn, toss, config, run_date, dry_run, lines):
-    """risk_off→risk_on 전이: 인버스 ETF 전량 매도 후 레짐을 risk_on 으로."""
+    """risk_off→risk_on 전이: 인버스 ETF 전량 매도 후 레짐을 risk_on 으로.
+
+    인버스 매도가 확인되지 않으면(수량 조회 실패 또는 매도 예외) 레짐을 그대로 두어
+    다음 실행에서 스위치를 통째로 재시도한다 - 인버스를 든 채 방치되는 것 방지.
+    """
     inv = config.regime_switch.inverse_ticker
     try:
         qty = toss.get_holding_quantity(inv)
     except Exception as exc:
-        lines.append(f"  {inv} 보유수량 조회 실패: {exc}")
-        qty = "0"
+        lines.append(f"  {inv} 보유수량 조회 실패: {exc} - 인버스 매도 실패, 레짐 전환 보류 (다음 실행 재시도)")
+        return
 
     if float(qty) > 0 and not has_order_been_placed(conn, run_date, inv, "SELL"):
         record_order(conn, run_date, inv, "SELL", 0.0, True, "regime_switch:off->on")
@@ -202,10 +232,16 @@ def execute_switch_to_on(conn, toss, config, run_date, dry_run, lines):
             client_order_id = f"{run_date}-{inv}-SELL"
             try:
                 result = toss.place_market_sell(inv, qty, client_order_id)
-                mark_order_placed(conn, run_date, inv, "SELL", result["orderId"], quantity=qty)
-                lines.append(f"  {inv} {qty}주 매도 (order {result['orderId']})")
             except Exception as exc:
-                lines.append(f"  {inv} 매도 실패: {exc}")
+                lines.append(f"  {inv} 매도 실패: {exc} - 레짐 전환 보류 (다음 실행 재시도)")
+                return
+            try:
+                mark_order_placed_with_retry(conn, run_date, inv, "SELL", result["orderId"], quantity=qty)
+                lines.append(f"  {inv} {qty}주 매도 (order {result['orderId']})")
+            except Exception:
+                lines.append(
+                    f"  {inv} 주문은 체결됐으나 로컬 기록 실패 (order_id={result['orderId']}) - 수동 확인 필요"
+                )
 
     if not dry_run:
         set_regime(conn, "risk_on", run_date)
