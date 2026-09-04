@@ -148,9 +148,10 @@ else:  # prev_regime == "risk_off"
 
 | 상황 | 처리 |
 |---|---|
-| yfinance 전체 조회 실패 | prev_regime 유지, 알림, 롱 흐름 정상 진행 |
-| 데이터 200일 미만 | 6.5(8.5)단계 스킵 + 경고 로그 |
-| VIX만 조회 실패 | `vix_high = False`로 두고 SMA 조건만으로 판정 + 부분 열화 알림 |
+| yfinance 전체 조회 실패 (prev = risk_on) | prev_regime 유지, "레짐 판정 스킵" 알림, 롱 흐름 정상 진행 (`_handle_regime` → False) |
+| yfinance 전체 조회 실패 (prev = risk_off) | prev_regime 유지, "레짐 판정 스킵" 알림, **롱 흐름 재개하지 않음** — risk_off dispatch로 빠져 pending 인버스 매수만 재시도 (`_handle_regime` → True). 데이터가 없다고 방어 태세를 풀지 않는다 |
+| 데이터 200일 미만 | `fetch_regime_data` 가 None 반환 → 위 "전체 조회 실패"와 동일 처리 |
+| VIX만 조회 실패 | `vix_high = False`로 두고 SMA 조건만으로 판정 (`compute_raw_signals` 가 `vix is None` 처리) |
 | `regime_switch.enabled: false` | 8.5단계 통째로 건너뜀 |
 
 ## 설정 (`config.yaml` 신규 블록)
