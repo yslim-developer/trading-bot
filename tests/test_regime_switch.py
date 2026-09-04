@@ -233,6 +233,48 @@ def test_attempt_inverse_buy_skips_when_already_placed(conn):
     assert get_current_regime(conn) == ("risk_off", 0)  # pending cleared
 
 
+def test_switch_to_off_partial_sell_failure_retried_next_run(conn):
+    class FlakyToss(FakeToss):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.sell_attempts = []
+
+        def place_market_sell(self, ticker, quantity, client_order_id):
+            self.sell_attempts.append(ticker)
+            if ticker == "MSFT":
+                raise RuntimeError("boom")
+            return super().place_market_sell(ticker, quantity, client_order_id)
+
+    toss = FlakyToss(holdings={"MSFT": 2, "MU": 5}, purchasing_power=1000.0)
+    regime.execute_switch_to_off(
+        conn, toss, _C(_cfg()), "2026-09-04", ["MSFT", "MU"], {"MSFT": 60.0, "MU": 40.0},
+        dry_run=False, transitioned=True, pending=0,
+    )
+    assert toss.sell_attempts == ["MSFT", "MU"]  # MSFT failed, MU sold
+
+    # next run: not a transition, pending already cleared, but MSFT still held
+    regime.execute_switch_to_off(
+        conn, toss, _C(_cfg()), "2026-09-05", ["MSFT", "MU"], {"MSFT": 60.0, "MU": 40.0},
+        dry_run=False, transitioned=False, pending=0,
+    )
+    assert toss.sell_attempts.count("MSFT") == 2  # stray long swept again
+    assert "MU" not in toss.sell_attempts[2:]  # MU already flat, not re-sold
+
+
+def test_attempt_inverse_buy_skips_when_already_holding_inverse(conn):
+    from orchestrator.state import set_regime, set_pending_inverse_buy
+    set_regime(conn, "risk_off", "2026-09-02")
+    set_pending_inverse_buy(conn, 1)
+    toss = FakeToss(holdings={"PSQ": 5}, purchasing_power=500.0)
+    lines = regime.execute_switch_to_off(
+        conn, toss, _C(_cfg()), "2026-09-03", ["MSFT"], {},
+        dry_run=False, transitioned=False, pending=1,
+    )
+    assert not any(o[0] == "BUY" for o in toss.orders)
+    assert get_current_regime(conn) == ("risk_off", 0)  # pending cleared
+    assert any("이미 보유 중" in ln for ln in lines)
+
+
 def test_switch_to_off_writes_orders_table(conn):
     toss = FakeToss(holdings={"MSFT": 2}, purchasing_power=1000.0)
     regime.execute_switch_to_off(

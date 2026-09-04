@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import yfinance as yf
 
 from orchestrator.state import (
+    get_current_regime,
     has_order_been_placed,
     mark_order_placed_with_retry,
     record_order,
@@ -140,6 +141,14 @@ def _attempt_inverse_buy(conn, toss, config, run_date, cap, dry_run, lines):
             set_pending_inverse_buy(conn, 0)
         return
     try:
+        if float(toss.get_holding_quantity(inv)) > 0:
+            lines.append(f"  {inv} 이미 보유 중 - 매수 건너뜀")
+            if not dry_run:
+                set_pending_inverse_buy(conn, 0)
+            return
+    except Exception:
+        pass  # 조회 실패 시엔 아래 정상 경로 진행 (has_order_been_placed 가 1차 방어)
+    try:
         pp = toss.get_purchasing_power_usd()
     except Exception as exc:
         lines.append(f"  매수가능금액 조회 실패: {exc} - {inv} 매수 보류")
@@ -181,31 +190,33 @@ def execute_switch_to_off(conn, toss, config, run_date, watchlist, positions_usd
                           dry_run, transitioned, pending):
     """risk_off 상태에서의 스위치.
 
-    - transitioned=True (risk_on→risk_off 최초): 롱 전량 매도 → set_regime + pending=1 → 인버스 매수 시도
-    - transitioned=False, pending=1: 인버스 매수만 재시도
-    - transitioned=False, pending=0: 홀딩 유지, 주문 없음
+    불변식: risk_off 동안 watchlist 롱 보유량은 0. 전이든 아니든 매 실행 재확인/정리하고,
+    이번 실행에서 정리한 롱 대금(또는 전이 후 pending)이 있으면 인버스 ETF 를 매수한다.
     """
-    rs = config.regime_switch
     lines = []
-    if transitioned:
-        sold_total = 0.0
-        for ticker in watchlist:
-            sold_total += _sell_one(
-                conn, toss, ticker, run_date, positions_usd, dry_run, lines,
-                "regime_switch:on->off",
-            )
-        if not dry_run:
-            set_regime(conn, "risk_off", run_date)
-            set_pending_inverse_buy(conn, 1)
-        if watchlist and sold_total <= 0:
-            # 매도가 하나도 성사되지 않음 - 롱을 아직 다 들고 있으므로 인버스를 사면
-            # 이중 노출. 매수는 건너뛰고 pending=1 을 유지해 다음 실행에서 재시도.
-            lines.append("  매도 미완료 - 인버스 매수 보류 (다음 실행 재시도)")
-        else:
-            _attempt_inverse_buy(conn, toss, config, run_date, sold_total, dry_run, lines)
-    elif pending:
-        lines.append(f"  {rs.inverse_ticker} 매수 재시도 (이전 실행에서 보류됨)")
-        _attempt_inverse_buy(conn, toss, config, run_date, None, dry_run, lines)
+
+    sold_total = 0.0
+    for ticker in watchlist:
+        sold_total += _sell_one(
+            conn, toss, ticker, run_date, positions_usd, dry_run, lines,
+            "regime_switch:on->off",
+        )
+
+    if transitioned and not dry_run:
+        set_regime(conn, "risk_off", run_date)
+        set_pending_inverse_buy(conn, 1)
+
+    _, still_pending = get_current_regime(conn)
+    if dry_run:
+        still_pending = 1 if transitioned else pending
+
+    if transitioned and watchlist and sold_total <= 0:
+        # 전이인데 매도가 하나도 성사 안 됨 - 롱을 다 든 채 인버스 사면 이중 노출.
+        # 매수 건너뛰고 pending=1 유지 → 다음 실행에서 롱 정리 + 매수 재시도.
+        lines.append("  매도 미완료 - 인버스 매수 보류 (다음 실행 재시도)")
+    elif still_pending or sold_total > 0:
+        cap = sold_total if sold_total > 0 else None
+        _attempt_inverse_buy(conn, toss, config, run_date, cap, dry_run, lines)
     else:
         lines.append("  risk_off 유지 - 주문 없음")
     return lines

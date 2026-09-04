@@ -4,8 +4,7 @@
 매일 적용해, risk_off 구간엔 인버스(PSQ), risk_on 구간엔 QQQ 를 보유했을 때의
 수익률을 바이앤홀드(QQQ)와 비교한다.
 
-프로덕션 봇 실행에는 불필요. requirements-backtest.txt 기반.
-    pip install -r requirements-backtest.txt
+yfinance + pandas 만 필요 (requirements.txt 에 포함). 프로덕션 봇 실행에는 불필요.
     python scripts/backtest_regime_switch.py
 """
 
