@@ -51,3 +51,34 @@ def fetch_regime_data(proxy_ticker="QQQ", sma_long=200, sma_short=50):
             if attempt < _FETCH_ATTEMPTS - 1:
                 time.sleep(_FETCH_BACKOFF_SECONDS)
     return None
+
+
+def compute_raw_signals(data, vix_threshold):
+    """오늘 하루치 원시 신호 (raw_risk_off, raw_risk_on) 를 반환한다.
+
+    둘은 상호 배타가 아니다 — 200일선 바로 아래이면서 데드크로스도 아니고
+    VIX 도 낮은 '중립' 구간에서는 둘 다 False.
+    """
+    below_200 = data.qqq_close < data.sma200
+    death_cross = data.sma50 < data.sma200
+    vix_high = data.vix is not None and data.vix > vix_threshold
+    raw_risk_off = below_200 and (death_cross or vix_high)
+    raw_risk_on = data.qqq_close >= data.sma200
+    return raw_risk_off, raw_risk_on
+
+
+def evaluate_regime(prev_regime, off_streak, on_streak, confirm_days):
+    """확인봉 + 히스테리시스로 새 레짐을 확정한다.
+
+    진입(risk_off)과 청산(risk_on)이 서로 다른 조건을 쓴다 (히스테리시스):
+    청산 조건이 진입보다 느슨해 200일선 근처 휩쏘에서 빠르게 롱 복귀한다.
+
+    반환: (new_regime, transitioned)
+    """
+    off_confirmed = off_streak >= confirm_days
+    on_confirmed = on_streak >= confirm_days
+    if prev_regime == "risk_on":
+        new_regime = "risk_off" if off_confirmed else "risk_on"
+    else:  # risk_off
+        new_regime = "risk_on" if on_confirmed else "risk_off"
+    return new_regime, (new_regime != prev_regime)
