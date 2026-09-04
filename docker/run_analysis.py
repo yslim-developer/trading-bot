@@ -67,7 +67,18 @@ def main():
     except Exception as exc:
         if "RESOURCE_EXHAUSTED" in str(exc) and os.environ.get("GROQ_API_KEY"):
             provider_used = "groq"
-            final_state, raw_decision = propagate_with_provider(args.ticker, args.date, "groq")
+            try:
+                final_state, raw_decision = propagate_with_provider(args.ticker, args.date, "groq")
+            except Exception as groq_exc:
+                # groq 무료 티어는 일부 분석 노드 프롬프트(8천 토큰대)가 모델별
+                # TPM 한도(현재 groq 범용 모델 전부 8000)를 넘겨 폴백 자체가
+                # 실패할 수 있다. 이 경우를 "Gemini 한도 초과"로만 보고하면
+                # "내일 리셋되면 괜찮다"는 잘못된 안심을 준다 -- 폴백도 죽었다는
+                # 사실을 GROQ_FALLBACK_FAILED 마커로 명시해 상위(orchestrator)가
+                # 구분해서 알리게 한다.
+                raise RuntimeError(
+                    f"GROQ_FALLBACK_FAILED: Gemini 한도 초과 후 groq 폴백도 실패: {groq_exc}"
+                ) from groq_exc
         else:
             raise
 

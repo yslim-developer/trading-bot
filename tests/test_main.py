@@ -10,7 +10,7 @@ from orchestrator.config import RegimeSwitchConfig
 from orchestrator.risk_engine import AccountState, RiskLimits
 from orchestrator.state import init_db, mark_order_placed, mark_run_started, record_order
 from orchestrator.toss_client import TossApiError
-from orchestrator.trading_agents_client import QuotaExhaustedError
+from orchestrator.trading_agents_client import FallbackExhaustedError, QuotaExhaustedError
 
 
 def make_config():
@@ -280,6 +280,42 @@ def test_quota_exhausted_error_produces_distinct_message_and_continues(monkeypat
         "Gemini 일일 요청 한도 초과" in text and "AAPL" in text for text in sent
     )
     # 한도 초과 종목만 스킵하고 나머지는 계속 진행 (전체 중단 아님)
+    assert captured_orders["buys"] == ["MSFT"]
+
+
+def test_fallback_exhausted_error_produces_distinct_message_and_continues(monkeypatch):
+    def fake_run_analysis(ticker, run_date):
+        if ticker == "AAPL":
+            raise FallbackExhaustedError(f"{ticker}: Gemini 한도 초과 + groq 폴백도 실패")
+        return "BUY", ""
+
+    monkeypatch.setattr(main_module, "run_analysis", fake_run_analysis)
+
+    sent = []
+    monkeypatch.setattr(
+        main_module, "send_telegram_message", lambda config, text: sent.append(text)
+    )
+
+    captured_orders = {}
+
+    class TrackingTossClient(FakeTossClient):
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            captured_orders.setdefault("buys", []).append(ticker)
+            return super().place_market_buy(ticker, amount_usd, client_order_id)
+
+    monkeypatch.setattr(main_module, "TossClient", TrackingTossClient)
+
+    main_module.run(dry_run=False)
+
+    # "내일 리셋되면 괜찮다"는 QuotaExhaustedError 문구가 아니라, 폴백 자체가
+    # 죽어서 리셋과 무관하게 재발 가능하다는 걸 명확히 알리는 전용 메시지여야
+    # 한다 (일반 Exception 핸들러가 str(exc)만 그대로 echo 하는 것과 구분).
+    assert any(
+        "groq 폴백" in text and "AAPL" in text and "재발" in text
+        for text in sent
+    )
+    assert not any("내일 자동 리셋됨" in text for text in sent)
+    # 실패 종목만 스킵하고 나머지는 계속 진행 (전체 중단 아님)
     assert captured_orders["buys"] == ["MSFT"]
 
 

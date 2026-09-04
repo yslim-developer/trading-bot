@@ -25,7 +25,11 @@ from orchestrator.state import (
     record_regime_signal,
 )
 from orchestrator.toss_client import TossApiError, TossClient
-from orchestrator.trading_agents_client import QuotaExhaustedError, run_analysis
+from orchestrator.trading_agents_client import (
+    FallbackExhaustedError,
+    QuotaExhaustedError,
+    run_analysis,
+)
 
 STOP_FILE = "STOP"
 DB_PATH = "data/trading.db"
@@ -135,6 +139,13 @@ def run(dry_run):
         for ticker in config.watchlist:
             try:
                 action, reasoning = run_analysis(ticker, run_date)
+            except FallbackExhaustedError:
+                send_telegram_message(
+                    config,
+                    f"[{run_date}] {ticker} 분석 실패 — Gemini 한도 초과 + groq 폴백도 용량초과로 실패"
+                    " (Gemini 한도가 내일 리셋돼도 재발 가능, 폴백 자체 점검 필요)",
+                )
+                continue
             except QuotaExhaustedError:
                 send_telegram_message(
                     config,
