@@ -48,7 +48,7 @@ def _handle_regime(conn, toss, config, run_date, account, dry_run):
             f"[{run_date}] 레짐 판정 스킵 (데이터 조회 실패) — 이전 레짐({prev_regime}) 유지",
         )
         new_regime, transitioned = prev_regime, False
-        lines = [f"[{run_date}] 레짐: {prev_regime} (데이터 없음)"]
+        lines = []
     else:
         raw_off, raw_on = regime_module.compute_raw_signals(data, rs.vix_threshold)
         record_regime_signal(
@@ -76,7 +76,8 @@ def _handle_regime(conn, toss, config, run_date, account, dry_run):
 
     if transitioned:  # risk_off -> risk_on
         regime_module.execute_switch_to_on(conn, toss, config, run_date, dry_run, lines)
-    send_telegram_message(config, "\n".join(lines))
+    if lines:
+        send_telegram_message(config, "\n".join(lines))
     return False
 
 

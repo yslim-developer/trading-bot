@@ -548,7 +548,7 @@ def test_regime_data_failure_keeps_long_flow(monkeypatch, tmp_path):
     assert ran == ["AAPL", "MSFT"]  # 데이터 실패해도 롱 흐름 정상 진행
 
 
-def test_regime_risk_off_transition_skips_long_analysis(monkeypatch, tmp_path):
+def test_regime_risk_off_transition_genuinely_skips_long_analysis(monkeypatch, tmp_path):
     cfg = make_config()
     cfg.regime_switch.enabled = True
     monkeypatch.setattr(main_module, "load_config", lambda: cfg)
@@ -564,12 +564,62 @@ def test_regime_risk_off_transition_skips_long_analysis(monkeypatch, tmp_path):
         lambda ticker, run_date: analysis_calls.append(ticker) or ("BUY", ""),
     )
 
-    # confirm_days defaults to 2: first run records 1 risk_off signal (no transition),
-    # second run records the 2nd and transitions -> long analysis skipped that run.
-    main_module.run(dry_run=False)
-    first_run_calls = list(analysis_calls)
-    analysis_calls.clear()
+    from datetime import date, timedelta
+    from orchestrator import state as state_module
+    seed = init_db(str(tmp_path / "trading.db"))
+    yday = (date.today() - timedelta(days=1)).isoformat()
+    state_module.record_regime_signal(seed, yday, 1, 0, 90.0, 100.0, 95.0, 30.0)
+    seed.close()
+
     main_module.run(dry_run=False)
 
-    assert first_run_calls == ["AAPL", "MSFT"]   # run 1: not yet confirmed, normal flow
-    assert analysis_calls == []                   # run 2: transitioned to risk_off, skipped
+    assert analysis_calls == []
+    check = init_db(str(tmp_path / "trading.db"))
+    assert check.execute("SELECT regime FROM regime_state WHERE id=1").fetchone()[0] == "risk_off"
+    check.close()
+
+
+def test_regime_switch_back_to_risk_on_resumes_long_flow(monkeypatch, tmp_path):
+    cfg = make_config()
+    cfg.regime_switch.enabled = True
+    monkeypatch.setattr(main_module, "load_config", lambda: cfg)
+
+    from orchestrator.regime import RegimeData
+    monkeypatch.setattr(
+        "orchestrator.regime.fetch_regime_data",
+        lambda *a, **k: RegimeData(qqq_close=110.0, sma200=100.0, sma50=105.0, vix=15.0),
+    )
+    analysis_calls = []
+    monkeypatch.setattr(
+        main_module, "run_analysis",
+        lambda ticker, run_date: analysis_calls.append(ticker) or ("HOLD", ""),
+    )
+
+    inv = cfg.regime_switch.inverse_ticker
+    sell_orders = []
+
+    class InverseHeldTossClient(FakeTossClient):
+        def get_holding_quantity(self, ticker):
+            return "10" if ticker == inv else "0"
+
+        def place_market_sell(self, ticker, quantity, client_order_id):
+            sell_orders.append((ticker, quantity))
+            return super().place_market_sell(ticker, quantity, client_order_id)
+
+    monkeypatch.setattr(main_module, "TossClient", InverseHeldTossClient)
+
+    from datetime import date, timedelta
+    from orchestrator import state as state_module
+    seed = init_db(str(tmp_path / "trading.db"))
+    state_module.set_regime(seed, "risk_off", (date.today() - timedelta(days=2)).isoformat())
+    yday = (date.today() - timedelta(days=1)).isoformat()
+    state_module.record_regime_signal(seed, yday, 0, 1, 110.0, 100.0, 105.0, 15.0)
+    seed.close()
+
+    main_module.run(dry_run=False)
+
+    assert (inv, "10") in sell_orders          # inverse ETF sold off
+    assert analysis_calls == ["AAPL", "MSFT"]  # long flow resumed
+    check = init_db(str(tmp_path / "trading.db"))
+    assert check.execute("SELECT regime FROM regime_state WHERE id=1").fetchone()[0] == "risk_on"
+    check.close()
