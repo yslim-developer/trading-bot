@@ -43,12 +43,8 @@ def _handle_regime(conn, toss, config, run_date, account, dry_run):
     data = regime_module.fetch_regime_data(rs.proxy_ticker, rs.sma_long, rs.sma_short)
 
     if data is None:
-        send_telegram_message(
-            config,
-            f"[{run_date}] 레짐 판정 스킵 (데이터 조회 실패) — 이전 레짐({prev_regime}) 유지",
-        )
         new_regime, transitioned = prev_regime, False
-        lines = []
+        lines = [f"[{run_date}] 레짐 판정 스킵 (데이터 조회 실패) — 이전 레짐({prev_regime}) 유지"]
     else:
         raw_off, raw_on = regime_module.compute_raw_signals(data, rs.vix_threshold)
         record_regime_signal(
