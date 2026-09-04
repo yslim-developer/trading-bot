@@ -3,6 +3,8 @@ import sqlite3
 import pytest
 
 from orchestrator.state import (
+    count_consecutive_signal,
+    get_current_regime,
     has_order_been_placed,
     has_run_completed_today,
     init_db,
@@ -12,6 +14,9 @@ from orchestrator.state import (
     mark_run_completed,
     mark_run_started,
     record_order,
+    record_regime_signal,
+    set_pending_inverse_buy,
+    set_regime,
 )
 
 
@@ -96,3 +101,50 @@ def test_mark_order_placed_only_stamps_one_row_when_duplicate_rows_exist(conn):
     rows = conn.execute("SELECT placed, order_id FROM orders WHERE ticker = 'AAPL'").fetchall()
     assert rows.count((1, "order-123")) == 1
     assert rows.count((0, None)) == 1
+
+
+def test_current_regime_defaults_to_risk_on(conn):
+    assert get_current_regime(conn) == ("risk_on", 0)
+
+
+def test_set_regime_then_read_back(conn):
+    set_regime(conn, "risk_off", "2026-09-03")
+    assert get_current_regime(conn) == ("risk_off", 0)
+
+
+def test_set_regime_unchanged_keeps_since_date(conn):
+    set_regime(conn, "risk_off", "2026-09-03")
+    set_regime(conn, "risk_off", "2026-09-10")  # 같은 레짐 재설정
+    row = conn.execute("SELECT regime, since_date FROM regime_state WHERE id = 1").fetchone()
+    assert row == ("risk_off", "2026-09-03")  # since_date 는 첫 전이일 유지
+
+
+def test_pending_inverse_buy_flag(conn):
+    set_regime(conn, "risk_off", "2026-09-03")
+    set_pending_inverse_buy(conn, 1)
+    assert get_current_regime(conn) == ("risk_off", 1)
+    set_pending_inverse_buy(conn, 0)
+    assert get_current_regime(conn) == ("risk_off", 0)
+
+
+def test_record_regime_signal_is_idempotent_per_date(conn):
+    record_regime_signal(conn, "2026-09-03", 1, 0, 21000.0, 21500.0, 21200.0, 28.0)
+    record_regime_signal(conn, "2026-09-03", 1, 0, 21001.0, 21500.0, 21200.0, 28.5)
+    rows = conn.execute("SELECT COUNT(*) FROM regime_signals").fetchone()
+    assert rows[0] == 1
+
+
+def test_count_consecutive_signal(conn):
+    record_regime_signal(conn, "2026-09-01", 0, 1, 1, 1, 1, 15.0)
+    record_regime_signal(conn, "2026-09-02", 1, 0, 1, 1, 1, 26.0)
+    record_regime_signal(conn, "2026-09-03", 1, 0, 1, 1, 1, 27.0)
+    record_regime_signal(conn, "2026-09-04", 1, 0, 1, 1, 1, 28.0)
+    assert count_consecutive_signal(conn, "2026-09-04", "risk_off") == 3
+    assert count_consecutive_signal(conn, "2026-09-04", "risk_on") == 0
+    assert count_consecutive_signal(conn, "2026-09-01", "risk_on") == 1
+
+
+def test_count_consecutive_signal_respects_as_of_date(conn):
+    record_regime_signal(conn, "2026-09-02", 1, 0, 1, 1, 1, 26.0)
+    record_regime_signal(conn, "2026-09-03", 1, 0, 1, 1, 1, 27.0)
+    assert count_consecutive_signal(conn, "2026-09-02", "risk_off") == 1

@@ -136,6 +136,54 @@ BUY/SELL/HOLD 각 결정마다 TradingAgents Portfolio Manager의 Executive Summ
 한글로 나오도록 강제한다. Rating(BUY/SELL/HOLD 판정)은 구조화 출력(enum)이라 언어 설정과 무관하게 항상
 영문 값으로 고정되므로 `normalize_decision` 파싱에는 영향 없다.
 
+## 레짐 스위치 (인버스 ETF, 선택)
+
+`config.yaml`의 `regime_switch.enabled: true`로 켜면, 매 실행 시 시장 레짐을 규칙으로
+판정해 하락장이면 롱을 전량 인버스 ETF로 전환한다. LLM(TradingAgents)은 쓰지 않는다.
+기본값은 `false`라 켜기 전에는 기존 동작과 완전히 동일하다.
+
+**판정 규칙 (QQQ를 지수 프록시로):**
+- **risk-off 진입**: QQQ 종가 < 200일 SMA **그리고** (50일<200일 데드크로스 **또는**
+  VIX > `vix_threshold`), `confirm_days`일 연속 충족
+- **risk-on 복귀**: QQQ 종가 ≥ 200일 SMA, `confirm_days`일 연속 (진입보다 느슨 =
+  휩쏘 완화)
+
+**전환 동작:**
+- risk_on → risk_off: watchlist 롱 전량 시장가 매도 → 매도대금·매수가능금액 중 작은 값의
+  `max_deploy_pct`%로 `inverse_ticker`(기본 PSQ) 매수. 그 실행에서는 TradingAgents
+  분석/주문을 건너뛴다(Gemini 호출 0). 서킷브레이커가 발동한 날도 스위치는 실행한다
+  (레짐 신호는 2일 확인이라 하루 -3%로는 안 뒤집힘).
+- 미국장 결제 지연으로 인버스 매수가 당일 불가하면, 매도만 하고 다음 실행에서 자동
+  재시도한다(`regime_state.pending_inverse_buy`).
+- risk_off → risk_on: 인버스 ETF 전량 매도 후 기존 롱 흐름 재개(이전 포트폴리오는
+  복원하지 않음 — TradingAgents가 새로 구성).
+
+**시세 데이터**: yfinance로 QQQ 일봉 + ^VIX를 받는다. 조회 실패 시 이전 레짐을 유지한다
+(fail-safe). 이전이 risk_on이면 롱 흐름 정상 진행, 이미 risk_off면 방어 태세를 유지한다
+(데이터가 없다고 롱을 다시 사지 않는다).
+
+**드라이런**: 실제 주문·상태 변경을 하지 않고 알림만 보낸다. 드라이런 중에는 전이가 매일
+재감지되어 알림이 반복되는 것이 정상이다.
+
+**백테스트**: `python scripts/backtest_regime_switch.py`로 규칙 기본값을 검증한다.
+2015~2026 구간 실측에서 휩쏘는 잘 억제되지만(전이 18회 중 7일내 재전환 1회) 강세장이 길어
+바이앤홀드를 하회하고 최대낙폭 방어 효과도 제한적이다 — 실제로 켤 계획이면
+`sma_long`/`confirm_days`/`vix_threshold`를 이 스크립트로 튜닝할 것.
+
+**설정 (`config.yaml`):**
+
+```yaml
+regime_switch:
+  enabled: false
+  proxy_ticker: QQQ
+  inverse_ticker: PSQ
+  sma_long: 200
+  sma_short: 50
+  vix_threshold: 25.0
+  confirm_days: 2
+  max_deploy_pct: 90
+```
+
 ## 리스크 엔진 백테스트 (개발용, 선택)
 
 `scripts/backtest_risk_engine.py`는 서킷브레이커/포지션 캡이 실제 과거 시장 위기(2020 코로나 폭락, 2022

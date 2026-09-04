@@ -126,6 +126,16 @@ class TossClient:
         items = body["result"]["items"]
         return items[0]["quantity"] if items else "0"
 
+    def get_purchasing_power_usd(self):
+        """현금 기반 매수 가능 금액(USD)을 반환한다. GET /api/v1/buying-power?currency=USD."""
+        body = self._request(
+            "GET",
+            "/api/v1/buying-power",
+            headers=self._auth_headers(),
+            params={"currency": "USD"},
+        )
+        return float(body["result"]["cashBuyingPower"])
+
     def place_market_buy(self, ticker, amount_usd, client_order_id):
         return self._place_order(
             {

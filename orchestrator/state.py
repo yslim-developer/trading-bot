@@ -1,4 +1,6 @@
 import sqlite3
+import time
+from datetime import date, datetime
 
 
 def init_db(db_path):
@@ -25,6 +27,30 @@ def init_db(db_path):
             placed INTEGER NOT NULL DEFAULT 0,
             order_id TEXT,
             quantity TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS regime_signals (
+            signal_date TEXT PRIMARY KEY,
+            raw_risk_off INTEGER NOT NULL,
+            raw_risk_on INTEGER NOT NULL,
+            qqq_close REAL,
+            sma200 REAL,
+            sma50 REAL,
+            vix REAL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS regime_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            regime TEXT NOT NULL,
+            since_date TEXT NOT NULL,
+            pending_inverse_buy INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
         )
         """
     )
@@ -92,9 +118,99 @@ def mark_order_placed(conn, run_date, ticker, action, order_id, quantity=None):
     conn.commit()
 
 
+def mark_order_placed_with_retry(
+    conn, run_date, ticker, action, order_id, quantity=None, attempts=3, delay_seconds=0.2
+):
+    """mark_order_placed를 몇 번 재시도한다.
+
+    체결 직후 로컬 DB 기록 실패는 대개 일시적(락 경합 등)이라, 몇 번의 짧은
+    재시도로 조용히 성공하는 경우가 많다. 재시도가 모두 실패하면 마지막
+    예외를 그대로 전파해 호출부가 "체결됐으나 로컬 기록 실패" 알림을 보내게 한다.
+    """
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            mark_order_placed(conn, run_date, ticker, action, order_id, quantity=quantity)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt < attempts - 1:
+                time.sleep(delay_seconds)
+    raise last_exc
+
+
 def has_order_been_placed(conn, run_date, ticker, action):
     row = conn.execute(
         "SELECT 1 FROM orders WHERE run_date = ? AND ticker = ? AND action = ? AND placed = 1",
         (run_date, ticker, action),
     ).fetchone()
     return row is not None
+
+
+def _ensure_regime_row(conn):
+    conn.execute(
+        "INSERT OR IGNORE INTO regime_state (id, regime, since_date, pending_inverse_buy, updated_at) "
+        "VALUES (1, 'risk_on', ?, 0, ?)",
+        (date.today().isoformat(), datetime.now().isoformat()),
+    )
+
+
+def get_current_regime(conn):
+    """(regime, pending_inverse_buy) 반환. 행이 없으면 ('risk_on', 0)."""
+    row = conn.execute(
+        "SELECT regime, pending_inverse_buy FROM regime_state WHERE id = 1"
+    ).fetchone()
+    if row is None:
+        return ("risk_on", 0)
+    return (row[0], row[1])
+
+
+def set_regime(conn, regime, since_date):
+    """레짐을 갱신한다. 레짐이 실제로 바뀔 때만 since_date 를 갱신하고,
+    같은 레짐 재설정이면 updated_at 만 갱신한다 (pending 플래그는 건드리지 않음)."""
+    _ensure_regime_row(conn)
+    current = conn.execute("SELECT regime FROM regime_state WHERE id = 1").fetchone()[0]
+    now = datetime.now().isoformat()
+    if current != regime:
+        conn.execute(
+            "UPDATE regime_state SET regime = ?, since_date = ?, updated_at = ? WHERE id = 1",
+            (regime, since_date, now),
+        )
+    else:
+        conn.execute("UPDATE regime_state SET updated_at = ? WHERE id = 1", (now,))
+    conn.commit()
+
+
+def set_pending_inverse_buy(conn, value):
+    _ensure_regime_row(conn)
+    conn.execute(
+        "UPDATE regime_state SET pending_inverse_buy = ?, updated_at = ? WHERE id = 1",
+        (int(value), datetime.now().isoformat()),
+    )
+    conn.commit()
+
+
+def record_regime_signal(conn, signal_date, raw_risk_off, raw_risk_on, qqq_close, sma200, sma50, vix):
+    conn.execute(
+        "INSERT OR REPLACE INTO regime_signals "
+        "(signal_date, raw_risk_off, raw_risk_on, qqq_close, sma200, sma50, vix) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (signal_date, int(raw_risk_off), int(raw_risk_on), qqq_close, sma200, sma50, vix),
+    )
+    conn.commit()
+
+
+def count_consecutive_signal(conn, as_of_date, kind):
+    """as_of_date(포함) 이전 날짜들에서 raw_{kind} 가 연속 1인 일수."""
+    col = "raw_risk_off" if kind == "risk_off" else "raw_risk_on"
+    rows = conn.execute(
+        f"SELECT {col} FROM regime_signals WHERE signal_date <= ? ORDER BY signal_date DESC",
+        (as_of_date,),
+    ).fetchall()
+    count = 0
+    for (value,) in rows:
+        if value == 1:
+            count += 1
+        else:
+            break
+    return count

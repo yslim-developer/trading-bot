@@ -31,7 +31,7 @@ ETF(PSQ)를 매수**한다. "risk-on"으로 복귀하면 인버스를 매도하�
 승인모드·드라이런을 그대로 상속하고, 두 로직이 같은 계좌를 놓고 충돌하는
 문제를 원천 차단하기 위해서다.
 
-`regime_switch.enabled: false`(기본값)이면 6.5단계는 통째로 건너뛰며 기존
+`regime_switch.enabled: false`(기본값)이면 8.5단계는 통째로 건너뛰며 기존
 봇 동작과 100% 동일하다.
 
 ## 실행 흐름
@@ -62,12 +62,11 @@ ETF(PSQ)를 매수**한다. "risk-on"으로 복귀하면 인버스를 매도하�
 
   레짐 = risk_off:
       - 전이 (risk_on → risk_off), 이 실행에서 최초:
-          1. order-info 호출 → 종목별 매도가능수량 확보
-          2. config.watchlist 각 티커 시장가 전량 매도 (per-order 격리:
-             한 종목 실패해도 나머지 계속. 기존 main.py 패턴)
-          3. set_regime(conn, "risk_off", run_date), pending_inverse_buy = 1
-          4. 같은 실행에서 즉시 PSQ 매수 시도:
-             order-info 재호출 → 매수가능금액 확인
+          1. config.watchlist 각 티커 get_holding_quantity → 시장가 전량 매도
+             (per-order 격리: 한 종목 실패해도 나머지 계속. 기존 main.py 패턴)
+          2. set_regime(conn, "risk_off", run_date), pending_inverse_buy = 1
+          3. 같은 실행에서 즉시 PSQ 매수 시도:
+             get_purchasing_power_usd 로 매수가능금액 확인
              deploy_usd = min(매수가능금액, 방금_매도한_종목들의_직전_시장가치_합)
                           * max_deploy_pct / 100
              deploy_usd 가 최소 주문금액 이상이면 place_market_buy("PSQ", deploy_usd)
@@ -148,9 +147,10 @@ else:  # prev_regime == "risk_off"
 
 | 상황 | 처리 |
 |---|---|
-| yfinance 전체 조회 실패 | prev_regime 유지, 알림, 롱 흐름 정상 진행 |
-| 데이터 200일 미만 | 6.5(8.5)단계 스킵 + 경고 로그 |
-| VIX만 조회 실패 | `vix_high = False`로 두고 SMA 조건만으로 판정 + 부분 열화 알림 |
+| yfinance 전체 조회 실패 (prev = risk_on) | prev_regime 유지, "레짐 판정 스킵" 알림, 롱 흐름 정상 진행 (`_handle_regime` → False) |
+| yfinance 전체 조회 실패 (prev = risk_off) | prev_regime 유지, "레짐 판정 스킵" 알림, **롱 흐름 재개하지 않음** — risk_off dispatch로 빠져 pending 인버스 매수만 재시도 (`_handle_regime` → True). 데이터가 없다고 방어 태세를 풀지 않는다 |
+| 데이터 200일 미만 | `fetch_regime_data` 가 None 반환 → 위 "전체 조회 실패"와 동일 처리 |
+| VIX만 조회 실패 | `vix_high = False`로 두고 SMA 조건만으로 판정 (`compute_raw_signals` 가 `vix is None` 처리) |
 | `regime_switch.enabled: false` | 8.5단계 통째로 건너뜀 |
 
 ## 설정 (`config.yaml` 신규 블록)
@@ -216,18 +216,16 @@ CREATE TABLE IF NOT EXISTS regime_state (
 
 ## 토스 클라이언트 (`orchestrator/toss_client.py`)
 
-신규 메서드 `get_order_info()`:
+신규 메서드 `get_purchasing_power_usd()` (구현 시 확정):
 
 ```
-GET /api/v1/order-info  (Bearer + X-Tossinvest-Account)
-→ 반환: {
-    "purchasing_power_usd": float,        # 현금 기반 매수 가능 금액
-    "sellable_quantity": {ticker: str},   # 종목별 매도가능수량
-  }
+GET /api/v1/buying-power?currency=USD  (Bearer + X-Tossinvest-Account)
+→ result.cashBuyingPower (decimal 문자열) 을 float 로 반환
 ```
 
-응답 필드 정확한 이름은 구현 시 `openapi.json`에서 확정한다. 이 메서드로
-기존 `get_holding_quantity` 반복 호출(스위치 시 N콜)을 1콜로 대체할 수 있다.
+`/api/v1/order-info` 는 존재하지 않아 `buying-power` 로 대체했다. 종목별
+매도가능수량은 별도로 확보하지 않고 기존 `get_holding_quantity(ticker)` 를
+스위치 시 티커별로 호출한다 (매수여력만 신규 엔드포인트가 필요).
 
 ## 알림
 
@@ -273,6 +271,27 @@ yfinance는 목킹한다 (고정 OHLCV 시리즈 픽스처). 프레임워크·�
 - **목적**: `vix_threshold` / `confirm_days` / `sma_long` 기본값이 휩쏘로
   수익을 잠식하지 않는지 실측 검증. 기본값은 이 백테스트 결과를 보고 확정한다.
 
+### 백테스트 결과 (2026-09-04 실행)
+
+파라미터: `vix_threshold=25.0`, `confirm_days=2`, `sma_long=200`, `sma_short=50`.
+
+```
+기간: 2015-10-16 ~ 2026-09-02  (2735일)
+전략 총수익률:      +228.5%
+QQQ 바이앤홀드:     +609.1%
+전이 횟수:          18
+휩쏘(7일내 재전환): 1
+전략 최대낙폭:      -37.5%
+```
+
+- 전이 18회 중 휩쏘 1회 → 확인봉+히스테리시스가 휩쏘를 억제함은 확인.
+- 다만 전 구간 성과는 바이앤홀드에 크게 뒤짐(+228% vs +609%): 1x 인버스(PSQ)
+  보유 구간의 기회비용과 200일선 재진입 지연 때문. 레짐 스위치는 수익 극대화가
+  아니라 낙폭 방어 장치라는 설계 의도와 일치하나, 최대낙폭도 -37.5%로 크게
+  줄지 않아 PSQ 대신 현금/단기채 옵션 검토 여지 있음.
+- 참고: `_load()` 는 티커별 상이한 tz(^VIX=America/Chicago)를 날짜 단위로
+  정규화한 뒤 join 한다(안 하면 조인 결과가 빈 DataFrame).
+
 ## 파일 변경 요약
 
 **신규:**
@@ -304,6 +323,8 @@ yfinance는 목킹한다 (고정 OHLCV 시리즈 픽스처). 프레임워크·�
 
 ## 미해결 / 구현 시 확정할 것
 
-- `/api/v1/order-info` 응답 필드 정확한 이름·구조 (openapi.json에서 확인)
-- 토스 US 시장가 주문 최소 금액 (deploy_usd 하한)
-- `since_date` 의미: 전이일 vs 마지막 갱신일 (전이일로 고정 권장 — 알림 가독성)
+- ~~`/api/v1/order-info` 응답 필드~~ → **확정 (Task 5)**: 해당 경로는 없음.
+  실제 엔드포인트는 `GET /api/v1/buying-power?currency=USD` (X-Tossinvest-Account 헤더 필요),
+  응답 `result.cashBuyingPower` (decimal 문자열, "미수 미발생 기준"). `TossClient.get_purchasing_power_usd()` 가 이걸 float 로 반환.
+- 토스 US 시장가 주문 최소 금액 (deploy_usd 하한) — 미확정, `regime.MIN_ORDER_USD = 1.0` 로 잠정 설정
+- `since_date` 의미: 전이일 vs 마지막 갱신일 → 전이일로 고정 (`set_regime` 이 레짐 변경 시에만 갱신, Task 2)

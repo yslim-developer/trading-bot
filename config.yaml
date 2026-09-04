@@ -17,3 +17,13 @@ schedule:
 approval:
   enabled: false
   timeout_minutes: 20
+
+regime_switch:
+  enabled: false          # 기본 false → 기존 봇과 동일 동작
+  proxy_ticker: QQQ
+  inverse_ticker: PSQ
+  sma_long: 200
+  sma_short: 50
+  vix_threshold: 25.0
+  confirm_days: 2
+  max_deploy_pct: 90      # min(매수가능금액, 매도한 종목들의 직전 시장가치 합)의 90%까지 인버스 매수

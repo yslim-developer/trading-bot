@@ -88,6 +88,24 @@ def test_get_holding_quantity_returns_raw_string_unconverted():
     assert quantity == "10.0"
 
 
+def test_get_purchasing_power_usd_parses_amount():
+    session = Mock()
+    session.request.side_effect = [
+        mock_response(200, {"access_token": "tok", "token_type": "Bearer", "expires_in": 86400}),
+        mock_response(200, {"result": [{"accountNo": "1", "accountSeq": 42, "accountType": "BROKERAGE"}]}),
+        mock_response(200, {"result": {"currency": "USD", "cashBuyingPower": "1234.56"}}),
+    ]
+    client = make_client(session)
+
+    assert client.get_purchasing_power_usd() == 1234.56
+
+    order_info_call = session.request.call_args_list[2]
+    assert order_info_call.args[0] == "GET"
+    assert order_info_call.args[1] == "https://openapi.tossinvest.com/api/v1/buying-power"
+    assert order_info_call.kwargs["headers"]["Authorization"] == "Bearer tok"
+    assert order_info_call.kwargs["params"] == {"currency": "USD"}
+
+
 def test_place_market_sell_sends_quantity_unmodified():
     session = Mock()
     session.request.side_effect = [
