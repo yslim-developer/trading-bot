@@ -304,6 +304,8 @@ yfinance는 목킹한다 (고정 OHLCV 시리즈 픽스처). 프레임워크·�
 
 ## 미해결 / 구현 시 확정할 것
 
-- `/api/v1/order-info` 응답 필드 정확한 이름·구조 (openapi.json에서 확인)
-- 토스 US 시장가 주문 최소 금액 (deploy_usd 하한)
-- `since_date` 의미: 전이일 vs 마지막 갱신일 (전이일로 고정 권장 — 알림 가독성)
+- ~~`/api/v1/order-info` 응답 필드~~ → **확정 (Task 5)**: 해당 경로는 없음.
+  실제 엔드포인트는 `GET /api/v1/buying-power?currency=USD` (X-Tossinvest-Account 헤더 필요),
+  응답 `result.cashBuyingPower` (decimal 문자열, "미수 미발생 기준"). `TossClient.get_purchasing_power_usd()` 가 이걸 float 로 반환.
+- 토스 US 시장가 주문 최소 금액 (deploy_usd 하한) — 미확정, `regime.MIN_ORDER_USD = 1.0` 로 잠정 설정
+- `since_date` 의미: 전이일 vs 마지막 갱신일 → 전이일로 고정 (`set_regime` 이 레짐 변경 시에만 갱신, Task 2)
