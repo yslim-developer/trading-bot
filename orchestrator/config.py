@@ -1,10 +1,22 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import yaml
 from dotenv import load_dotenv
 
 from orchestrator.risk_engine import RiskLimits
+
+
+@dataclass
+class RegimeSwitchConfig:
+    enabled: bool = False
+    proxy_ticker: str = "QQQ"
+    inverse_ticker: str = "PSQ"
+    sma_long: int = 200
+    sma_short: int = 50
+    vix_threshold: float = 25.0
+    confirm_days: int = 2
+    max_deploy_pct: float = 90.0
 
 
 @dataclass
@@ -19,6 +31,7 @@ class AppConfig:
     healthcheck_ping_url: str
     approval_enabled: bool
     approval_timeout_minutes: int
+    regime_switch: RegimeSwitchConfig
 
 
 def load_config(config_path="config.yaml", env_path=".env"):
@@ -36,6 +49,12 @@ def load_config(config_path="config.yaml", env_path=".env"):
 
     approval = raw.get("approval", {})
 
+    regime_switch_raw = raw.get("regime_switch", {})
+    known = {f.name for f in fields(RegimeSwitchConfig)}
+    regime_switch = RegimeSwitchConfig(
+        **{k: v for k, v in regime_switch_raw.items() if k in known}
+    )
+
     return AppConfig(
         watchlist=raw["watchlist"],
         risk_limits=risk_limits,
@@ -47,4 +66,5 @@ def load_config(config_path="config.yaml", env_path=".env"):
         healthcheck_ping_url=os.environ.get("HEALTHCHECK_PING_URL", ""),
         approval_enabled=approval.get("enabled", False),
         approval_timeout_minutes=approval.get("timeout_minutes", 20),
+        regime_switch=regime_switch,
     )

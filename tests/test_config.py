@@ -118,3 +118,47 @@ def test_load_config_reads_approval_section_when_present(tmp_path):
 
     assert config.approval_enabled is True
     assert config.approval_timeout_minutes == 15
+
+
+def test_regime_switch_defaults_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOSS_CLIENT_ID", "x")
+    monkeypatch.setenv("TOSS_CLIENT_SECRET", "x")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "x")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "x")
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "watchlist: [AAPL]\n"
+        "risk_limits: {per_ticker_max_usd: 10, per_ticker_max_position_usd: 50, "
+        "daily_max_buy_usd: 300, daily_loss_circuit_pct: -3.0, max_concurrent_positions: 5}\n"
+        "schedule: {run_time_kst: '22:40'}\n",
+        encoding="utf-8",
+    )
+    from orchestrator.config import load_config
+    config = load_config(config_path=str(cfg_file), env_path=str(tmp_path / ".env"))
+    assert config.regime_switch.enabled is False
+    assert config.regime_switch.proxy_ticker == "QQQ"
+    assert config.regime_switch.inverse_ticker == "PSQ"
+    assert config.regime_switch.confirm_days == 2
+    assert config.regime_switch.max_deploy_pct == 90.0
+
+
+def test_regime_switch_parsed_from_yaml(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOSS_CLIENT_ID", "x")
+    monkeypatch.setenv("TOSS_CLIENT_SECRET", "x")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "x")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "x")
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "watchlist: [AAPL]\n"
+        "risk_limits: {per_ticker_max_usd: 10, per_ticker_max_position_usd: 50, "
+        "daily_max_buy_usd: 300, daily_loss_circuit_pct: -3.0, max_concurrent_positions: 5}\n"
+        "schedule: {run_time_kst: '22:40'}\n"
+        "regime_switch: {enabled: true, vix_threshold: 30.0, confirm_days: 3}\n",
+        encoding="utf-8",
+    )
+    from orchestrator.config import load_config
+    config = load_config(config_path=str(cfg_file), env_path=str(tmp_path / ".env"))
+    assert config.regime_switch.enabled is True
+    assert config.regime_switch.vix_threshold == 30.0
+    assert config.regime_switch.confirm_days == 3
+    assert config.regime_switch.inverse_ticker == "PSQ"  # 미지정 필드는 기본값
