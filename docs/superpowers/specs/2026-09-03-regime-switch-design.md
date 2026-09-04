@@ -31,7 +31,7 @@ ETF(PSQ)를 매수**한다. "risk-on"으로 복귀하면 인버스를 매도하�
 승인모드·드라이런을 그대로 상속하고, 두 로직이 같은 계좌를 놓고 충돌하는
 문제를 원천 차단하기 위해서다.
 
-`regime_switch.enabled: false`(기본값)이면 6.5단계는 통째로 건너뛰며 기존
+`regime_switch.enabled: false`(기본값)이면 8.5단계는 통째로 건너뛰며 기존
 봇 동작과 100% 동일하다.
 
 ## 실행 흐름
@@ -62,12 +62,11 @@ ETF(PSQ)를 매수**한다. "risk-on"으로 복귀하면 인버스를 매도하�
 
   레짐 = risk_off:
       - 전이 (risk_on → risk_off), 이 실행에서 최초:
-          1. order-info 호출 → 종목별 매도가능수량 확보
-          2. config.watchlist 각 티커 시장가 전량 매도 (per-order 격리:
-             한 종목 실패해도 나머지 계속. 기존 main.py 패턴)
-          3. set_regime(conn, "risk_off", run_date), pending_inverse_buy = 1
-          4. 같은 실행에서 즉시 PSQ 매수 시도:
-             order-info 재호출 → 매수가능금액 확인
+          1. config.watchlist 각 티커 get_holding_quantity → 시장가 전량 매도
+             (per-order 격리: 한 종목 실패해도 나머지 계속. 기존 main.py 패턴)
+          2. set_regime(conn, "risk_off", run_date), pending_inverse_buy = 1
+          3. 같은 실행에서 즉시 PSQ 매수 시도:
+             get_purchasing_power_usd 로 매수가능금액 확인
              deploy_usd = min(매수가능금액, 방금_매도한_종목들의_직전_시장가치_합)
                           * max_deploy_pct / 100
              deploy_usd 가 최소 주문금액 이상이면 place_market_buy("PSQ", deploy_usd)
@@ -217,18 +216,16 @@ CREATE TABLE IF NOT EXISTS regime_state (
 
 ## 토스 클라이언트 (`orchestrator/toss_client.py`)
 
-신규 메서드 `get_order_info()`:
+신규 메서드 `get_purchasing_power_usd()` (구현 시 확정):
 
 ```
-GET /api/v1/order-info  (Bearer + X-Tossinvest-Account)
-→ 반환: {
-    "purchasing_power_usd": float,        # 현금 기반 매수 가능 금액
-    "sellable_quantity": {ticker: str},   # 종목별 매도가능수량
-  }
+GET /api/v1/buying-power?currency=USD  (Bearer + X-Tossinvest-Account)
+→ result.cashBuyingPower (decimal 문자열) 을 float 로 반환
 ```
 
-응답 필드 정확한 이름은 구현 시 `openapi.json`에서 확정한다. 이 메서드로
-기존 `get_holding_quantity` 반복 호출(스위치 시 N콜)을 1콜로 대체할 수 있다.
+`/api/v1/order-info` 는 존재하지 않아 `buying-power` 로 대체했다. 종목별
+매도가능수량은 별도로 확보하지 않고 기존 `get_holding_quantity(ticker)` 를
+스위치 시 티커별로 호출한다 (매수여력만 신규 엔드포인트가 필요).
 
 ## 알림
 
