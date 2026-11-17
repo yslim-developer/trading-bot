@@ -30,6 +30,13 @@ def init_db(db_path):
         )
         """
     )
+    # CREATE TABLE IF NOT EXISTS 는 기존 테이블에 컬럼을 추가하지 않는다 --
+    # quantity 이전(2026-08-23 전) 스키마로 만든 DB는 여기서 보정하지 않으면
+    # mark_order_placed 가 "no such column: quantity" 로 매번 실패해 체결된
+    # 주문이 placed=0 으로 남는다 (같은 날 재실행 시 중복 주문 방지도 무력화).
+    order_columns = {row[1] for row in conn.execute("PRAGMA table_info(orders)")}
+    if "quantity" not in order_columns:
+        conn.execute("ALTER TABLE orders ADD COLUMN quantity TEXT")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS regime_signals (

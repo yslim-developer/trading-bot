@@ -148,3 +148,26 @@ def test_count_consecutive_signal_respects_as_of_date(conn):
     record_regime_signal(conn, "2026-09-02", 1, 0, 1, 1, 1, 26.0)
     record_regime_signal(conn, "2026-09-03", 1, 0, 1, 1, 1, 27.0)
     assert count_consecutive_signal(conn, "2026-09-02", "risk_off") == 1
+
+
+def test_init_db_adds_quantity_column_to_pre_existing_orders_table(tmp_path):
+    # 2026-08-23 이전 스키마(quantity 없음)로 만든 DB. CREATE TABLE IF NOT EXISTS
+    # 만으로는 컬럼이 추가되지 않아 mark_order_placed 가 매번 실패했었다.
+    db_path = str(tmp_path / "old.db")
+    old = sqlite3.connect(db_path)
+    old.execute(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, run_date TEXT NOT NULL, "
+        "ticker TEXT NOT NULL, action TEXT NOT NULL, amount_usd REAL NOT NULL, "
+        "approved INTEGER NOT NULL, reason TEXT NOT NULL, placed INTEGER NOT NULL DEFAULT 0, "
+        "order_id TEXT)"
+    )
+    old.commit()
+    old.close()
+
+    conn = init_db(db_path)
+    record_order(conn, "2026-11-17", "MSFT", "SELL", 0.0, True, "approved")
+    mark_order_placed(conn, "2026-11-17", "MSFT", "SELL", "ord-1", quantity="0.5")
+
+    assert has_order_been_placed(conn, "2026-11-17", "MSFT", "SELL") is True
+    assert conn.execute("SELECT order_id, quantity FROM orders").fetchone() == ("ord-1", "0.5")
+    init_db(db_path)  # 두 번째 호출도 문제없어야 함 (이미 컬럼 있음)
