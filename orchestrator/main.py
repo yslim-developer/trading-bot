@@ -142,7 +142,7 @@ def run(dry_run):
             except FallbackExhaustedError:
                 send_telegram_message(
                     config,
-                    f"[{run_date}] {ticker} 분석 실패 — Gemini 한도 초과 + groq 폴백도 용량초과로 실패"
+                    f"[{run_date}] {ticker} 분석 실패 — Gemini 한도 초과 + Claude/groq 폴백도 모두 실패"
                     " (Gemini 한도가 내일 리셋돼도 재발 가능, 폴백 자체 점검 필요)",
                 )
                 continue
