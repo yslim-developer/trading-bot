@@ -21,6 +21,7 @@ from orchestrator.state import (
     mark_order_placed_with_retry,
     mark_run_completed,
     mark_run_started,
+    record_holdings,
     record_order,
     record_regime_signal,
 )
@@ -115,6 +116,7 @@ def run(dry_run):
             return
 
         account = toss.get_account_state(config.watchlist)
+        record_holdings(conn, run_date, toss.get_holdings())
 
         if account.daily_pnl_pct <= config.risk_limits.daily_loss_circuit_pct:
             mark_circuit_breaker_triggered(conn, run_date)

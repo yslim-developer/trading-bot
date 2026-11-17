@@ -13,6 +13,7 @@ from orchestrator.state import (
     mark_order_placed,
     mark_run_completed,
     mark_run_started,
+    record_holdings,
     record_order,
     record_regime_signal,
     set_pending_inverse_buy,
@@ -171,3 +172,20 @@ def test_init_db_adds_quantity_column_to_pre_existing_orders_table(tmp_path):
     assert has_order_been_placed(conn, "2026-11-17", "MSFT", "SELL") is True
     assert conn.execute("SELECT order_id, quantity FROM orders").fetchone() == ("ord-1", "0.5")
     init_db(db_path)  # 두 번째 호출도 문제없어야 함 (이미 컬럼 있음)
+
+
+def test_record_holdings_replaces_same_day_snapshot(conn):
+    items = [
+        {"symbol": "MU", "quantity": "0.057632", "averagePurchasePrice": "700.5",
+         "marketValue": {"amount": "41.83"}},
+        {"symbol": "NVTS", "quantity": "20", "averagePurchasePrice": "11.82",
+         "marketValue": {"amount": "157.6"}},
+    ]
+    record_holdings(conn, "2026-11-17", items)
+    record_holdings(conn, "2026-11-17", items[1:])  # 재실행: MU 매도 후
+
+    rows = conn.execute(
+        "SELECT symbol, quantity, avg_price_usd, market_value_usd FROM holdings "
+        "WHERE snapshot_date = '2026-11-17'"
+    ).fetchall()
+    assert rows == [("NVTS", "20", 11.82, 157.6)]

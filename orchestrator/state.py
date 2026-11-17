@@ -39,6 +39,18 @@ def init_db(db_path):
         conn.execute("ALTER TABLE orders ADD COLUMN quantity TEXT")
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS holdings (
+            snapshot_date TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            quantity TEXT NOT NULL,
+            avg_price_usd REAL,
+            market_value_usd REAL,
+            PRIMARY KEY (snapshot_date, symbol)
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS regime_signals (
             signal_date TEXT PRIMARY KEY,
             raw_risk_off INTEGER NOT NULL,
@@ -152,6 +164,29 @@ def has_order_been_placed(conn, run_date, ticker, action):
         (run_date, ticker, action),
     ).fetchone()
     return row is not None
+
+
+def record_holdings(conn, snapshot_date, items):
+    """토스 /holdings items 를 그날 스냅샷으로 저장한다 (같은 날 재실행 시 통째로 교체).
+
+    quantity 는 소수점 주식 수량을 float 왕복 없이 원문 문자열 그대로 보관한다.
+    """
+    conn.execute("DELETE FROM holdings WHERE snapshot_date = ?", (snapshot_date,))
+    conn.executemany(
+        "INSERT INTO holdings (snapshot_date, symbol, quantity, avg_price_usd, market_value_usd) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (
+                snapshot_date,
+                item["symbol"],
+                str(item["quantity"]),
+                float(item["averagePurchasePrice"]) if item.get("averagePurchasePrice") else None,
+                float(item["marketValue"]["amount"]),
+            )
+            for item in items
+        ],
+    )
+    conn.commit()
 
 
 def _ensure_regime_row(conn):

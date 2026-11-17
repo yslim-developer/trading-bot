@@ -52,6 +52,12 @@ class FakeTossClient:
     def get_holding_quantity(self, ticker):
         return "0"
 
+    def get_holdings(self):
+        return [
+            {"symbol": "NVTS", "quantity": "20", "averagePurchasePrice": "11.8",
+             "marketValue": {"amount": "157.6"}},
+        ]
+
     def get_purchasing_power_usd(self):
         return 1000.0
 
@@ -735,3 +741,10 @@ def test_regime_data_failure_stays_defensive_when_risk_off(monkeypatch, tmp_path
     assert check.execute("SELECT regime FROM regime_state WHERE id=1").fetchone()[0] == "risk_off"
     assert has_run_completed_today(check, run_date)  # completed via the regime path
     check.close()
+
+
+def test_run_records_full_holdings_snapshot():
+    main_module.run(dry_run=False)
+
+    conn = sqlite3.connect(main_module.DB_PATH)
+    assert conn.execute("SELECT symbol, quantity FROM holdings").fetchall() == [("NVTS", "20")]

@@ -3,13 +3,22 @@ watchlist:
   - KOID
   - MU
   - JPM
+  - FANG
+  - NVDA
+  - GOOGL
+  - AMZN
+  - LLY
+  - COST
+  - NVTS
+  - ANTW
+  - JEPQ
 
 risk_limits:
   per_ticker_max_usd: 10
   per_ticker_max_position_usd: 50
   daily_max_buy_usd: 300
   daily_loss_circuit_pct: -3.0
-  max_concurrent_positions: 5
+  max_concurrent_positions: 10
 
 schedule:
   run_time_kst: "22:40"

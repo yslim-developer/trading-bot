@@ -111,6 +111,11 @@ class TossClient:
         daily_pnl_pct = float(result["dailyProfitLoss"]["rate"]) * 100
         return AccountState(positions_usd=positions_usd, daily_pnl_pct=daily_pnl_pct)
 
+    def get_holdings(self):
+        """watchlist 와 무관하게 계좌의 전체 보유 종목 items 를 반환한다."""
+        body = self._request("GET", "/api/v1/holdings", headers=self._auth_headers())
+        return body["result"]["items"]
+
     def is_us_market_open_today(self):
         body = self._request(
             "GET",
