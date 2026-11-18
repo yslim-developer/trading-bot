@@ -1,0 +1,8 @@
+# docker/Dockerfile 빌드에 필요한 것만 컨텍스트로 보낸다 (venv/data/.env 제외)
+*
+!vendor/tradingagents
+!docker/run_analysis.py
+!orchestrator/decision_mapping.py
+vendor/tradingagents/.git
+**/.env*
+**/__pycache__

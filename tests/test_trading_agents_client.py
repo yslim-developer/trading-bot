@@ -120,13 +120,15 @@ def test_run_analysis_raises_fallback_exhausted_error_when_groq_also_fails(monke
         run_analysis("AAPL", "2026-08-21")
 
 
-def test_run_analysis_reraises_other_called_process_errors_unchanged(monkeypatch):
+def test_run_analysis_surfaces_container_stderr_tail_on_other_errors(monkeypatch):
     def fake_run(*args, **kwargs):
         raise subprocess.CalledProcessError(
-            returncode=1, cmd=["docker"], output="", stderr="some unrelated Docker error"
+            returncode=1, cmd=["docker"], output="",
+            stderr="warning noise\nTraceback ...\nValueError: some unrelated Docker error\n",
         )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    with pytest.raises(subprocess.CalledProcessError):
+    # str(CalledProcessError) 는 "exit status 1" 뿐이라 알림에 원인이 안 보였다
+    with pytest.raises(RuntimeError, match="some unrelated Docker error"):
         run_analysis("AAPL", "2026-08-21")

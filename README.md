@@ -125,7 +125,10 @@ Gemini 무료 티어는 하루 요청 한도가 있어(gemini-3.5-flash 기준 2
 - `GROQ_API_KEY`가 비어 있으면 기존과 동일하게 동작한다(해당 종목 스킵 + 구분된 알림).
 - groq 계정을 여러 개 만들어 Gemini 자체를 우회하는 방식은 하지 않는다 — Google 무료 티어 약관 위반 소지가
   있어, 대신 별도 제공자로 자연스럽게 넘어가는 방식을 택했다.
-- `docker/run_analysis.py`의 `PROVIDER_MODELS`에서 provider/모델 조합을 바꿀 수 있다.
+- `docker/run_analysis.py`의 `PROVIDER_MODELS`에서 provider/모델 조합을 바꿀 수 있다. 이 스크립트는
+  이미지에 포함되므로(`docker/Dockerfile`) 수정 후 `docker compose build`가 필요하다
+  (`scripts/run_daily.ps1`이 매 실행 전 자동으로 빌드한다).
+- Gemini가 한도 초과(`RESOURCE_EXHAUSTED`)뿐 아니라 과부하(`503 UNAVAILABLE`)로 실패해도 폴백한다.
 
 ## 판단 근거 알림
 

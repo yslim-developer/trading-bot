@@ -32,6 +32,7 @@ PROVIDER_MODELS = {
 }
 
 FALLBACK_PROVIDERS = [("anthropic", "ANTHROPIC_API_KEY"), ("groq", "GROQ_API_KEY")]
+FALLBACK_TRIGGERS = ("RESOURCE_EXHAUSTED", "UNAVAILABLE")
 
 
 def build_config(provider):
@@ -73,7 +74,10 @@ def main():
         final_state, raw_decision = propagate_with_provider(args.ticker, args.date, "google")
     except Exception as exc:
         fallbacks = [p for p, key in FALLBACK_PROVIDERS if os.environ.get(key)]
-        if "RESOURCE_EXHAUSTED" not in str(exc) or not fallbacks:
+        # RESOURCE_EXHAUSTED(일일 한도) 뿐 아니라 503 UNAVAILABLE(Gemini 과부하,
+        # "high demand")도 폴백한다 -- 과부하는 한도와 달리 실행 시점마다 랜덤하게
+        # 터져서, 폴백 없이 두면 해당 종목 분석이 그냥 실패한다.
+        if not any(m in str(exc) for m in FALLBACK_TRIGGERS) or not fallbacks:
             raise
         errors = []
         for provider_used in fallbacks:
@@ -91,7 +95,7 @@ def main():
             # 죽었다는 사실을 LLM_FALLBACK_FAILED 마커로 명시해 상위
             # (orchestrator)가 구분해서 알리게 한다.
             raise RuntimeError(
-                "LLM_FALLBACK_FAILED: Gemini 한도 초과 후 폴백도 모두 실패: "
+                "LLM_FALLBACK_FAILED: Gemini 한도 초과/과부하 후 폴백도 모두 실패: "
                 + " | ".join(errors)
             ) from exc
 

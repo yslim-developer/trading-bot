@@ -29,4 +29,8 @@ Get-ChildItem -Path "logs" -Filter "run-*.log" |
     Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
     Remove-Item -Force
 
+# run_analysis.py/decision_mapping.py 는 이미지에 구워져 있으므로(docker/Dockerfile)
+# 매 실행 전 빌드해 최신 스크립트를 반영한다 (변경 없으면 캐시로 수 초).
+docker compose build -q *>> $logFile
+
 & ".\venv\Scripts\python.exe" "-m" "orchestrator.main" *>> $logFile

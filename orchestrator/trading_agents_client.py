@@ -52,7 +52,12 @@ def run_analysis(ticker, run_date, timeout_seconds=1800):
             raise QuotaExhaustedError(
                 f"{ticker}: Gemini 일일 요청 한도 초과"
             ) from exc
-        raise
+        # CalledProcessError 의 str()은 "exit status 1" 뿐이라 텔레그램 알림만으로
+        # 원인을 알 수 없었다 -- 컨테이너 stderr 끝부분(보통 예외 메시지)을 붙인다.
+        tail = " | ".join(line.strip() for line in stderr.strip().splitlines()[-3:])
+        raise RuntimeError(
+            f"{ticker} 분석 컨테이너 실패 (exit {exc.returncode}): {tail[-500:]}"
+        ) from exc
     for line in reversed(result.stdout.strip().splitlines()):
         line = line.strip()
         if line.startswith("{"):
