@@ -1,17 +1,13 @@
+# Claude(Sonnet) 폴백 시 종목당 약 $1/일 -> 8종목 x 22영업일 ~= $180/월 (한도 $200)
 watchlist:
   - MSFT
-  - KOID
   - MU
-  - JPM
-  - FANG
+  - NVTS
   - NVDA
   - GOOGL
   - AMZN
   - LLY
-  - COST
-  - NVTS
-  - ANTW
-  - JEPQ
+  - JPM
 
 risk_limits:
   per_ticker_max_usd: 10

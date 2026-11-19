@@ -119,7 +119,7 @@ Gemini 무료 티어는 하루 요청 한도가 있어(gemini-3.5-flash 기준 2
 종목만 자동으로 [groq](https://console.groq.com)의 무료 오픈웨이트 모델(`openai/gpt-oss-120b`/
 `openai/gpt-oss-20b`)로 재시도한다.
 
-- `ANTHROPIC_API_KEY`를 채우면 groq보다 먼저 Claude(`claude-opus-5-5` deep / `claude-sonnet-5-5` quick)로
+- `ANTHROPIC_API_KEY`를 채우면 groq보다 먼저 Claude(`claude-sonnet-5-5` deep/quick 모두)로
   재시도한다. 유료 API라 폴백이 일어난 종목만큼 과금된다. Claude도 실패하면 groq(키가 있을 때)로 넘어간다.
 - Gemini가 정상 응답하면 폴백 제공자는 전혀 호출되지 않는다 — 순수 폴백이다.
 - `GROQ_API_KEY`가 비어 있으면 기존과 동일하게 동작한다(해당 종목 스킵 + 구분된 알림).

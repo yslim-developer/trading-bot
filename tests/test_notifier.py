@@ -23,6 +23,7 @@ def test_send_telegram_message_posts_expected_payload(monkeypatch):
 
     def fake_post(url, data, timeout):
         calls.append((url, data, timeout))
+        return Mock(ok=True)
 
     monkeypatch.setattr(requests, "post", fake_post)
 
@@ -176,3 +177,12 @@ def test_wait_for_telegram_reply_times_out_without_response(monkeypatch):
     )
 
     assert result == "timeout"
+
+
+def test_split_message_keeps_every_chunk_under_telegram_limit():
+    from orchestrator.notifier import split_message
+    text = "\n".join(["- AAPL BUY: 승인", "  이유: " + "가" * 900] * 12 + ["x" * 9000])
+    chunks = split_message(text, limit=4000)
+    assert all(len(c) <= 4000 for c in chunks)
+    assert "".join(chunks).replace("\n", "") == text.replace("\n", "")
+    assert split_message("short") == ["short"]

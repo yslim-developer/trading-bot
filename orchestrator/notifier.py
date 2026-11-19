@@ -6,14 +6,40 @@ APPROVE_WORDS = {"승인", "approve", "yes", "y"}
 REJECT_WORDS = {"거부", "reject", "no", "n"}
 
 
+TELEGRAM_MAX_CHARS = 4000  # API 한도 4096 -- 넘으면 400 "message is too long" 로 통째로 안 감
+
+
+def split_message(text, limit=TELEGRAM_MAX_CHARS):
+    """줄 단위로 limit 이하 조각으로 나눈다 (한 줄이 limit 보다 길면 그 줄을 자른다)."""
+    chunks, current = [], ""
+    for line in text.splitlines():
+        while len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            chunks.append(current)
+            candidate = line
+        current = candidate
+    if current:
+        chunks.append(current)
+    return chunks or [""]
+
+
 def send_telegram_message(config, text):
     url = f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage"
-    try:
-        requests.post(
-            url, data={"chat_id": config.telegram_chat_id, "text": text}, timeout=10
-        )
-    except requests.RequestException as exc:
-        print(f"텔레그램 알림 전송 실패: {type(exc).__name__}")
+    for chunk in split_message(text):
+        try:
+            resp = requests.post(
+                url, data={"chat_id": config.telegram_chat_id, "text": chunk}, timeout=10
+            )
+            if not resp.ok:
+                print(f"텔레그램 알림 전송 실패: HTTP {resp.status_code} {resp.text[:200]}")
+        except requests.RequestException as exc:
+            print(f"텔레그램 알림 전송 실패: {type(exc).__name__}")
 
 
 def ping_healthcheck(config, suffix=""):

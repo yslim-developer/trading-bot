@@ -5,6 +5,7 @@ import re
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 
 # docker-compose.yml이 orchestrator/decision_mapping.py를 이 경로로 마운트한다 --
 # 호스트(orchestrator.trading_agents_client)와 정확히 같은 파일을 임포트하므로
@@ -22,7 +23,7 @@ PROVIDER_MODELS = {
         "quick_think_llm": "gemini-3.1-flash-lite",
     },
     "anthropic": {
-        "deep_think_llm": "claude-opus-5-5",
+        "deep_think_llm": "claude-sonnet-5-5",  # 비용: Opus 대비 deep 단계 절반
         "quick_think_llm": "claude-sonnet-5-5",
     },
     "groq": {
@@ -34,6 +35,9 @@ PROVIDER_MODELS = {
 FALLBACK_PROVIDERS = [("anthropic", "ANTHROPIC_API_KEY"), ("groq", "GROQ_API_KEY")]
 FALLBACK_TRIGGERS = ("RESOURCE_EXHAUSTED", "UNAVAILABLE")
 
+# 모델별 토큰 사용량 누적 (API 비용 산정용). 폴백 시 두 provider 사용량이 모두 남는다.
+USAGE = UsageMetadataCallbackHandler()
+
 
 def build_config(provider):
     config = DEFAULT_CONFIG.copy()
@@ -44,7 +48,7 @@ def build_config(provider):
 
 
 def propagate_with_provider(ticker, date, provider):
-    graph = TradingAgentsGraph(debug=False, config=build_config(provider))
+    graph = TradingAgentsGraph(debug=False, config=build_config(provider), callbacks=[USAGE])
     return graph.propagate(ticker, date)
 
 
@@ -106,6 +110,7 @@ def main():
         "raw_decision": str(raw_decision),
         "reasoning": extract_reasoning(final_state),
         "provider": provider_used,
+        "usage": USAGE.usage_metadata,
     }
     print(json.dumps(result))
 
