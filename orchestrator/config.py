@@ -1,4 +1,5 @@
 import os
+from datetime import date
 from dataclasses import dataclass, fields
 
 import yaml
@@ -34,7 +35,16 @@ class AppConfig:
     regime_switch: RegimeSwitchConfig
 
 
-def load_config(config_path="config.yaml", env_path=".env"):
+def _active_extra_watchlist(raw, today):
+    """extra_watchlist.until(YYYY-MM-DD, 당일 포함)까지만 종목을 덧붙인다 -- 기간 한정 확장이
+    날짜가 지나면 손으로 되돌리지 않아도 자동으로 빠지게 한다."""
+    extra = raw.get("extra_watchlist") or {}
+    if extra.get("until") and today <= str(extra["until"]):
+        return list(extra.get("tickers", []))
+    return []
+
+
+def load_config(config_path="config.yaml", env_path=".env", today=None):
     load_dotenv(env_path)
     with open(config_path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
@@ -56,7 +66,7 @@ def load_config(config_path="config.yaml", env_path=".env"):
     )
 
     return AppConfig(
-        watchlist=raw["watchlist"],
+        watchlist=raw["watchlist"] + _active_extra_watchlist(raw, today or date.today().isoformat()),
         risk_limits=risk_limits,
         run_time_kst=raw["schedule"]["run_time_kst"],
         toss_client_id=os.environ["TOSS_CLIENT_ID"],

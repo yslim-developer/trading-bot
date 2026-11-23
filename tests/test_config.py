@@ -162,3 +162,37 @@ def test_regime_switch_parsed_from_yaml(tmp_path, monkeypatch):
     assert config.regime_switch.vix_threshold == 30.0
     assert config.regime_switch.confirm_days == 3
     assert config.regime_switch.inverse_ticker == "PSQ"  # 미지정 필드는 기본값
+
+
+def test_extra_watchlist_applies_only_through_until_date(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            watchlist: [AAPL]
+            extra_watchlist:
+              until: "2026-12-02"
+              tickers: [META, V]
+            risk_limits:
+              per_ticker_max_usd: 100
+              per_ticker_max_position_usd: 500
+              daily_max_buy_usd: 300
+              daily_loss_circuit_pct: -3.0
+              max_concurrent_positions: 5
+            schedule:
+              run_time_kst: "22:40"
+            """
+        ),
+        encoding="utf-8",
+    )
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "TOSS_CLIENT_ID=a\nTOSS_CLIENT_SECRET=b\nTELEGRAM_BOT_TOKEN=c\nTELEGRAM_CHAT_ID=d\n",
+        encoding="utf-8",
+    )
+
+    def load(today):
+        return load_config(str(config_path), str(env_path), today=today).watchlist
+
+    assert load("2026-12-02") == ["AAPL", "META", "V"]
+    assert load("2026-12-03") == ["AAPL"]

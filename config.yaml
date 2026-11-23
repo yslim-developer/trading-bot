@@ -1,5 +1,3 @@
-# ~12/2 Claude(Sonnet) 1순위(.env CLAUDE_PRIMARY_UNTIL): 종목당 약 $1.06/일
-# 15종목 x 7회(11/23~12/2, 11/26 휴장) ~= $111 (크레딧 $120). 12/3 이후엔 8종목으로 되돌릴 것.
 watchlist:
   - MSFT
   - MU
@@ -9,13 +7,19 @@ watchlist:
   - AMZN
   - LLY
   - JPM
-  - COST
-  - FANG
-  - KOID
-  - AAPL
-  - META
-  - AVGO
-  - V
+
+# Claude 크레딧 소진 기간(.env CLAUDE_PRIMARY_UNTIL 과 같은 날짜) 동안만 추가 분석.
+# 15종목 x 7회(11/23~12/2, 11/26 휴장) x 약 $1.08 ~= $113. 12/3부터 자동으로 8종목.
+extra_watchlist:
+  until: "2026-12-02"
+  tickers:
+    - COST
+    - FANG
+    - KOID
+    - AAPL
+    - META
+    - AVGO
+    - V
 
 risk_limits:
   per_ticker_max_usd: 10
