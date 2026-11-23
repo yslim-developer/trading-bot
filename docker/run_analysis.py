@@ -73,16 +73,25 @@ def main():
     parser.add_argument("date")
     args = parser.parse_args()
 
-    provider_used = "google"
+    # CLAUDE_PRIMARY_UNTIL(YYYY-MM-DD) 이하 날짜는 Claude 를 1순위로 쓴다 (선불 크레딧
+    # 소진 기간용). 날짜가 지나면 자동으로 Gemini 1순위로 돌아간다.
+    claude_first = bool(os.environ.get("ANTHROPIC_API_KEY")) and args.date <= os.environ.get(
+        "CLAUDE_PRIMARY_UNTIL", ""
+    )
+    provider_used = "anthropic" if claude_first else "google"
     try:
-        final_state, raw_decision = propagate_with_provider(args.ticker, args.date, "google")
+        final_state, raw_decision = propagate_with_provider(args.ticker, args.date, provider_used)
     except Exception as exc:
-        fallbacks = [p for p, key in FALLBACK_PROVIDERS if os.environ.get(key)]
-        # RESOURCE_EXHAUSTED(일일 한도) 뿐 아니라 503 UNAVAILABLE(Gemini 과부하,
-        # "high demand")도 폴백한다 -- 과부하는 한도와 달리 실행 시점마다 랜덤하게
-        # 터져서, 폴백 없이 두면 해당 종목 분석이 그냥 실패한다.
-        if not any(m in str(exc) for m in FALLBACK_TRIGGERS) or not fallbacks:
-            raise
+        if claude_first:
+            # 크레딧 소진 등 Claude 쪽 어떤 에러든 무료 Gemini 로 넘긴다.
+            fallbacks = ["google"]
+        else:
+            fallbacks = [p for p, key in FALLBACK_PROVIDERS if os.environ.get(key)]
+            # RESOURCE_EXHAUSTED(일일 한도) 뿐 아니라 503 UNAVAILABLE(Gemini 과부하,
+            # "high demand")도 폴백한다 -- 과부하는 한도와 달리 실행 시점마다 랜덤하게
+            # 터져서, 폴백 없이 두면 해당 종목 분석이 그냥 실패한다.
+            if not any(m in str(exc) for m in FALLBACK_TRIGGERS) or not fallbacks:
+                raise
         errors = []
         for provider_used in fallbacks:
             try:
@@ -99,7 +108,7 @@ def main():
             # 죽었다는 사실을 LLM_FALLBACK_FAILED 마커로 명시해 상위
             # (orchestrator)가 구분해서 알리게 한다.
             raise RuntimeError(
-                "LLM_FALLBACK_FAILED: Gemini 한도 초과/과부하 후 폴백도 모두 실패: "
+                f"LLM_FALLBACK_FAILED: 1순위({'anthropic' if claude_first else 'google'}) 실패 후 폴백도 모두 실패: "
                 + " | ".join(errors)
             ) from exc
 

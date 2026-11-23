@@ -1,4 +1,5 @@
-# Claude(Sonnet) 폴백 시 종목당 약 $1/일 -> 8종목 x 22영업일 ~= $180/월 (한도 $200)
+# ~12/2 Claude(Sonnet) 1순위(.env CLAUDE_PRIMARY_UNTIL): 종목당 약 $1.06/일
+# 15종목 x 7회(11/23~12/2, 11/26 휴장) ~= $111 (크레딧 $120). 12/3 이후엔 8종목으로 되돌릴 것.
 watchlist:
   - MSFT
   - MU
@@ -8,6 +9,13 @@ watchlist:
   - AMZN
   - LLY
   - JPM
+  - COST
+  - FANG
+  - KOID
+  - AAPL
+  - META
+  - AVGO
+  - V
 
 risk_limits:
   per_ticker_max_usd: 10
