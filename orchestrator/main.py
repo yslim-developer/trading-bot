@@ -1,7 +1,8 @@
 import argparse
 import os
 import time
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from orchestrator.config import load_config
 from orchestrator.notifier import (
@@ -38,6 +39,17 @@ DB_PATH = "data/trading.db"
 SELL_SETTLE_SECONDS = 10
 # TradingAgents 5단계 등급 중 BUY 로 매핑되는 것들의 배분 가중치 (그 외는 1)
 BUY_WEIGHTS = {"buy": 2.0, "overweight": 1.0}
+
+
+def _wait_until_trade_time(config):
+    """분석이 일찍 끝났으면 trade_time_et(미국 동부 HH:MM)까지 기다린다. 이미 지났으면 바로 진행."""
+    if not getattr(config, "trade_time_et", ""):
+        return
+    hour, minute = map(int, config.trade_time_et.split(":"))
+    now = datetime.now(ZoneInfo("America/New_York"))
+    delay = (now.replace(hour=hour, minute=minute, second=0, microsecond=0) - now).total_seconds()
+    if 0 < delay < 8 * 3600:
+        time.sleep(delay)
 
 
 def _process_order(conn, toss, run_date, r, execute, summary_lines):
@@ -224,6 +236,19 @@ def run(dry_run):
                     weight=BUY_WEIGHTS.get(str(raw_decision).strip().lower(), 1.0),
                 )
             )
+
+        # 분석은 장 시작 전에 미리 돌리고, 매매는 trade_time_et(장 시작 직후)에 한다.
+        _wait_until_trade_time(config)
+        account = toss.get_account_state(config.watchlist)  # 장 시작 후 손익으로 다시 판단
+        if account.daily_pnl_pct <= config.risk_limits.daily_loss_circuit_pct:
+            mark_circuit_breaker_triggered(conn, run_date)
+            send_telegram_message(
+                config,
+                f"[{run_date}] 서킷브레이커 발동 (당일 손익 {account.daily_pnl_pct:.2f}%) - 신규 주문 없음.",
+            )
+            ping_healthcheck(config)
+            mark_run_completed(conn, run_date)
+            return
 
         # 매도를 먼저 내고, 그 뒤 USD 현금으로 매수를 배분한다 (매도 대금도 매수에 쓰기 위해).
         sell_side = [d for d in decisions if d.action != "BUY"]

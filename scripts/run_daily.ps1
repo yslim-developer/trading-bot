@@ -2,21 +2,20 @@ Set-Location "E:\MyProject"
 New-Item -ItemType Directory -Force -Path "logs" | Out-Null
 
 # 서머타임 자동 조정: 미국 동부 기준 서머타임(EDT) 여부에 따라 다음 실행 트리거
-# 시각을 22:40(EDT)/23:40(EST)으로 매번 재확인/재설정한다. config.yaml의
-# run_time_kst는 EDT 기준값이므로 이 값과 맞물려 있다.
+# 시각을 19:30(EDT)/20:30(EST)으로 매번 재확인/재설정한다 (장 시작 3시간 전 분석 시작,
+# 매매는 orchestrator 가 config.yaml schedule.trade_time_et(09:31 ET)까지 기다렸다가 실행).
 try {
     $easternTz = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
     $isDst = $easternTz.IsDaylightSavingTime((Get-Date))
-    $correctTime = if ($isDst) { "22:40" } else { "23:40" }
+    $correctTime = if ($isDst) { "19:30" } else { "20:30" }
 
     $task = Get-ScheduledTask -TaskName "TradingBot Daily Run" -ErrorAction SilentlyContinue
     if ($task) {
         $currentTime = ([datetime]$task.Triggers[0].StartBoundary).ToString("HH:mm")
         if ($currentTime -ne $correctTime) {
-            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-File E:\MyProject\scripts\run_daily.ps1"
+            # 트리거만 교체한다 (Register -Force 로 작업을 다시 만들면 지금 돌고 있는 이 실행에 영향을 줄 수 있음)
             $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At $correctTime
-            $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
-            Register-ScheduledTask -TaskName "TradingBot Daily Run" -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+            Set-ScheduledTask -TaskName "TradingBot Daily Run" -Trigger $trigger | Out-Null
         }
     }
 } catch {

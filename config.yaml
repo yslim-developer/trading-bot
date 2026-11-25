@@ -28,7 +28,8 @@ risk_limits:
   max_concurrent_positions: 10
 
 schedule:
-  run_time_kst: "22:40"
+  run_time_kst: "20:30"     # 분석 시작 (EST 기준, EDT 땐 19:30) -- scripts/run_daily.ps1 이 자동 조정
+  trade_time_et: "09:31"    # 분석이 일찍 끝나면 이 시각(미국 동부, 장 시작 1분 후 = KST 23:31/EDT 22:31)까지 기다렸다가 매매
 
 approval:
   enabled: false

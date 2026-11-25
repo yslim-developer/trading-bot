@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 import orchestrator.main as main_module
+
+REAL_WAIT_UNTIL_TRADE_TIME = main_module._wait_until_trade_time
 import orchestrator.state as state_module
 from orchestrator.config import RegimeSwitchConfig
 from orchestrator.risk_engine import AccountState, RiskLimits
@@ -81,6 +83,7 @@ def patch_dependencies(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(main_module, "DB_PATH", str(tmp_path / "trading.db"))
     monkeypatch.setattr(main_module, "SELL_SETTLE_SECONDS", 0)
+    monkeypatch.setattr(main_module, "_wait_until_trade_time", lambda config: None)
     monkeypatch.setattr(main_module, "STOP_FILE", str(tmp_path / "STOP"))
     monkeypatch.chdir(tmp_path)
 
@@ -780,3 +783,27 @@ def test_sells_run_before_buys_and_buys_use_cash_read_after_sells(monkeypatch):
     main_module.run(dry_run=False)
 
     assert calls == [("SELL", "MSFT"), ("CASH",), ("BUY", "AAPL", 190.0)]
+
+
+def test_wait_until_trade_time_sleeps_until_target_only_if_in_future(monkeypatch):
+    monkeypatch.setattr(main_module, "_wait_until_trade_time", REAL_WAIT_UNTIL_TRADE_TIME)
+    from datetime import datetime as real_datetime
+    from zoneinfo import ZoneInfo
+
+    slept = []
+    monkeypatch.setattr(main_module.time, "sleep", lambda s: slept.append(s))
+    config = SimpleNamespace(trade_time_et="09:31")
+
+    def at(h, m):
+        class FakeDatetime:
+            @staticmethod
+            def now(tz):
+                return real_datetime(2026, 11, 27, h, m, tzinfo=ZoneInfo("America/New_York"))
+        return FakeDatetime
+
+    monkeypatch.setattr(main_module, "datetime", at(7, 31))
+    main_module._wait_until_trade_time(config)
+    monkeypatch.setattr(main_module, "datetime", at(9, 40))  # 이미 지남 -> 바로 진행
+    main_module._wait_until_trade_time(config)
+
+    assert slept == [2 * 3600]

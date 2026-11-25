@@ -33,6 +33,7 @@ class AppConfig:
     approval_enabled: bool
     approval_timeout_minutes: int
     regime_switch: RegimeSwitchConfig
+    trade_time_et: str = ""  # "HH:MM" 미국 동부 -- 빈 값이면 기다리지 않음
 
 
 def _active_extra_watchlist(raw, today):
@@ -76,4 +77,5 @@ def load_config(config_path="config.yaml", env_path=".env", today=None):
         approval_enabled=approval.get("enabled", False),
         approval_timeout_minutes=approval.get("timeout_minutes", 20),
         regime_switch=regime_switch,
+        trade_time_et=raw["schedule"].get("trade_time_et", ""),
     )
