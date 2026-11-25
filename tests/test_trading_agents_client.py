@@ -52,7 +52,7 @@ def test_run_analysis_parses_last_json_line_with_reasoning(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    action, reasoning = run_analysis("AAPL", "2026-08-21")
+    action, reasoning, _raw = run_analysis("AAPL", "2026-08-21")
 
     assert action == "BUY"
     assert reasoning == "강한 실적 모멘텀"
@@ -65,7 +65,7 @@ def test_run_analysis_defaults_reasoning_to_empty_string_when_missing(monkeypatc
     )
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: fake_result)
 
-    action, reasoning = run_analysis("AAPL", "2026-08-21")
+    action, reasoning, _raw = run_analysis("AAPL", "2026-08-21")
 
     assert action == "HOLD"
     assert reasoning == ""

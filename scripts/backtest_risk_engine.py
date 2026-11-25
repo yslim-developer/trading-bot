@@ -35,9 +35,8 @@ def load_risk_limits(config_path="config.yaml"):
         raw = yaml.safe_load(f)
     rl = raw["risk_limits"]
     limits = RiskLimits(
-        per_ticker_max_usd=rl["per_ticker_max_usd"],
-        per_ticker_max_position_usd=rl["per_ticker_max_position_usd"],
-        daily_max_buy_usd=rl["daily_max_buy_usd"],
+        buy_cash_ratio=rl["buy_cash_ratio"],
+        max_position_pct=rl["max_position_pct"],
         daily_loss_circuit_pct=rl["daily_loss_circuit_pct"],
         max_concurrent_positions=rl["max_concurrent_positions"],
     )
@@ -53,6 +52,7 @@ def simulate(tickers, limits, price_returns):
     Returns: (일별 기록 DataFrame, 서킷브레이커 발동일 리스트)
     """
     positions_usd = {t: 0.0 for t in tickers}
+    cash_usd = 10000.0  # 시뮬레이션 시작 USD 현금
     circuit_breaker_days = []
     history = []
 
@@ -65,9 +65,11 @@ def simulate(tickers, limits, price_returns):
         for t in tickers:
             positions_usd[t] += positions_usd[t] * day_return[t]
 
-        account = AccountState(positions_usd=dict(positions_usd), daily_pnl_pct=daily_pnl_pct)
+        account = AccountState(
+            positions_usd=dict(positions_usd), daily_pnl_pct=daily_pnl_pct, cash_usd=cash_usd
+        )
         decisions = [
-            Decision(ticker=t, action="BUY", amount_usd=limits.per_ticker_max_usd) for t in tickers
+            Decision(ticker=t, action="BUY") for t in tickers
         ]
         results = evaluate_decisions(decisions, account, limits)
 
@@ -78,6 +80,7 @@ def simulate(tickers, limits, price_returns):
         for r in results:
             if r.approved:
                 positions_usd[r.ticker] += r.amount_usd
+                cash_usd -= r.amount_usd
 
         history.append(
             {
@@ -121,8 +124,8 @@ def main():
 
     tickers, limits = load_risk_limits()
     print(f"워치리스트: {tickers}")
-    print(f"리스크 한도: 종목당 1회 ${limits.per_ticker_max_usd}, 누적 ${limits.per_ticker_max_position_usd}, "
-          f"일일 총액 ${limits.daily_max_buy_usd}, 서킷브레이커 {limits.daily_loss_circuit_pct}%, "
+    print(f"리스크 한도: 현금 {limits.buy_cash_ratio:.0%} 배분, 종목당 총자산의 {limits.max_position_pct}%, "
+          f"서킷브레이커 {limits.daily_loss_circuit_pct}%, "
           f"최대 {limits.max_concurrent_positions}종목")
 
     for period_name, (start, end) in STRESS_PERIODS.items():

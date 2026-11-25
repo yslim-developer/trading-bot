@@ -8,9 +8,8 @@ from orchestrator.risk_engine import (
 
 def make_limits(**overrides):
     defaults = dict(
-        per_ticker_max_usd=100.0,
-        per_ticker_max_position_usd=100000.0,
-        daily_max_buy_usd=300.0,
+        buy_cash_ratio=0.95,
+        max_position_pct=40.0,
         daily_loss_circuit_pct=-3.0,
         max_concurrent_positions=5,
     )
@@ -18,115 +17,102 @@ def make_limits(**overrides):
     return RiskLimits(**defaults)
 
 
-def test_circuit_breaker_blocks_all_orders_when_daily_loss_exceeds_threshold():
-    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=100.0)]
-    account = AccountState(positions_usd={}, daily_pnl_pct=-5.0)
-    results = evaluate_decisions(decisions, account, make_limits())
+def buy(ticker, weight=1.0, reasoning=""):
+    return Decision(ticker=ticker, action="BUY", weight=weight, reasoning=reasoning)
 
-    assert len(results) == 1
+
+def test_circuit_breaker_blocks_all_orders_when_daily_loss_exceeds_threshold():
+    account = AccountState(positions_usd={}, daily_pnl_pct=-5.0, cash_usd=1000.0)
+    results = evaluate_decisions([buy("AAPL")], account, make_limits())
+
     assert results[0].approved is False
     assert results[0].reason == "circuit_breaker"
 
 
-def test_buy_amount_capped_at_per_ticker_limit():
-    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=500.0)]
-    account = AccountState(positions_usd={}, daily_pnl_pct=0.0)
-    results = evaluate_decisions(decisions, account, make_limits(per_ticker_max_usd=100.0))
+def test_buy_budget_is_cash_ratio_split_by_weight():
+    account = AccountState(positions_usd={}, cash_usd=1000.0)
+    results = evaluate_decisions(
+        [buy("AAPL", 2.0), buy("MSFT", 1.0)], account, make_limits(max_position_pct=100.0)
+    )
 
-    assert results[0].approved is True
+    # 950 을 2:1 로
+    assert [r.amount_usd for r in results] == [633.33, 316.66]
+    assert all(r.approved for r in results)
+
+
+def test_position_cap_limits_buy_and_excess_goes_to_others():
+    # 총자산 = 주식 0 + 현금 1000 -> 종목당 상한 400. 950 을 2:1:1 로 나누면 AAPL 475 > 400.
+    account = AccountState(positions_usd={}, cash_usd=1000.0)
+    results = evaluate_decisions(
+        [buy("AAPL", 2.0), buy("MSFT"), buy("NVDA")], account, make_limits()
+    )
+
+    assert [r.amount_usd for r in results] == [400.0, 275.0, 275.0]
+
+
+def test_position_cap_counts_existing_holding():
+    # 총자산 = 300 + 700 = 1000 -> 상한 400, AAPL 은 이미 300 보유 -> 100 만 추가
+    account = AccountState(positions_usd={"AAPL": 300.0}, cash_usd=700.0)
+    results = evaluate_decisions([buy("AAPL")], account, make_limits())
+
     assert results[0].amount_usd == 100.0
 
 
-def test_buy_amount_capped_at_remaining_daily_budget():
-    decisions = [
-        Decision(ticker="AAPL", action="BUY", amount_usd=100.0),
-        Decision(ticker="MSFT", action="BUY", amount_usd=100.0),
-        Decision(ticker="NVDA", action="BUY", amount_usd=100.0),
-    ]
-    account = AccountState(positions_usd={}, daily_pnl_pct=0.0)
-    results = evaluate_decisions(
-        decisions, account, make_limits(per_ticker_max_usd=100.0, daily_max_buy_usd=150.0)
-    )
-
-    assert [r.amount_usd for r in results] == [100.0, 50.0, 0.0]
-    assert results[2].approved is False
-    assert results[2].reason == "no_budget_remaining"
-
-
-def test_new_buy_rejected_when_max_concurrent_positions_reached():
-    decisions = [Decision(ticker="NVDA", action="BUY", amount_usd=100.0)]
-    account = AccountState(
-        positions_usd={"AAPL": 500.0, "MSFT": 500.0}, daily_pnl_pct=0.0
-    )
-    results = evaluate_decisions(decisions, account, make_limits(max_concurrent_positions=2))
-
-    assert results[0].approved is False
-    assert results[0].reason == "max_positions"
-
-
-def test_addon_buy_to_existing_position_not_blocked_by_max_positions():
-    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=100.0)]
-    account = AccountState(positions_usd={"AAPL": 500.0, "MSFT": 500.0}, daily_pnl_pct=0.0)
-    results = evaluate_decisions(decisions, account, make_limits(max_concurrent_positions=2))
-
-    assert results[0].approved is True
-
-
-def test_buy_amount_capped_by_remaining_position_room():
-    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=100.0)]
-    account = AccountState(positions_usd={"AAPL": 45.0}, daily_pnl_pct=0.0)
-    results = evaluate_decisions(
-        decisions, account, make_limits(per_ticker_max_position_usd=50.0)
-    )
-
-    assert results[0].approved is True
-    assert results[0].amount_usd == 5.0
-
-
 def test_buy_rejected_when_position_cap_already_reached():
-    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=100.0)]
-    account = AccountState(positions_usd={"AAPL": 50.0}, daily_pnl_pct=0.0)
-    results = evaluate_decisions(
-        decisions, account, make_limits(per_ticker_max_position_usd=50.0)
-    )
+    account = AccountState(positions_usd={"AAPL": 500.0}, cash_usd=500.0)
+    results = evaluate_decisions([buy("AAPL")], account, make_limits())
 
     assert results[0].approved is False
     assert results[0].reason == "position_cap_reached"
 
 
-def test_sell_always_approved_without_amount_cap():
-    decisions = [Decision(ticker="AAPL", action="SELL", amount_usd=0.0)]
-    account = AccountState(positions_usd={"AAPL": 500.0}, daily_pnl_pct=0.0)
-    results = evaluate_decisions(decisions, account, make_limits())
-
-    assert results[0].approved is True
-    assert results[0].reason == "approved"
-
-
-def test_hold_never_approved():
-    decisions = [Decision(ticker="AAPL", action="HOLD", amount_usd=0.0)]
-    account = AccountState(positions_usd={}, daily_pnl_pct=0.0)
-    results = evaluate_decisions(decisions, account, make_limits())
+def test_no_cash_means_no_budget():
+    account = AccountState(positions_usd={"MSFT": 100.0}, cash_usd=0.0)
+    results = evaluate_decisions([buy("AAPL")], account, make_limits())
 
     assert results[0].approved is False
-    assert results[0].reason == "hold"
+    assert results[0].reason == "no_budget_remaining"
+
+
+def test_new_buy_rejected_when_max_concurrent_positions_reached():
+    account = AccountState(positions_usd={"AAPL": 500.0, "MSFT": 500.0}, cash_usd=1000.0)
+    results = evaluate_decisions([buy("NVDA")], account, make_limits(max_concurrent_positions=2))
+
+    assert results[0].approved is False
+    assert results[0].reason == "max_positions"
+
+
+def test_selling_today_frees_a_position_slot():
+    account = AccountState(positions_usd={"AAPL": 500.0, "MSFT": 500.0}, cash_usd=1000.0)
+    decisions = [Decision(ticker="AAPL", action="SELL"), buy("NVDA")]
+    results = evaluate_decisions(decisions, account, make_limits(max_concurrent_positions=2))
+
+    assert results[1].approved is True
+
+
+def test_addon_buy_to_existing_position_not_blocked_by_max_positions():
+    account = AccountState(positions_usd={"AAPL": 50.0, "MSFT": 50.0}, cash_usd=1000.0)
+    results = evaluate_decisions([buy("AAPL")], account, make_limits(max_concurrent_positions=2))
+
+    assert results[0].approved is True
+
+
+def test_sell_always_approved_and_hold_never():
+    account = AccountState(positions_usd={"AAPL": 500.0}, cash_usd=0.0)
+    decisions = [Decision(ticker="AAPL", action="SELL"), Decision(ticker="MSFT", action="HOLD")]
+    results = evaluate_decisions(decisions, account, make_limits())
+
+    assert (results[0].approved, results[0].reason) == (True, "approved")
+    assert (results[1].approved, results[1].reason) == (False, "hold")
 
 
 def test_reasoning_passes_through_unchanged_for_every_action():
     decisions = [
-        Decision(ticker="AAPL", action="BUY", amount_usd=10.0, reasoning="AI 근거 BUY"),
-        Decision(ticker="MSFT", action="SELL", amount_usd=0.0, reasoning="AI 근거 SELL"),
-        Decision(ticker="GOOGL", action="HOLD", amount_usd=0.0, reasoning="AI 근거 HOLD"),
+        buy("AAPL", reasoning="AI 근거 BUY"),
+        Decision(ticker="MSFT", action="SELL", reasoning="AI 근거 SELL"),
+        Decision(ticker="GOOGL", action="HOLD", reasoning="AI 근거 HOLD"),
     ]
-    account = AccountState(positions_usd={"MSFT": 100.0}, daily_pnl_pct=0.0)
+    account = AccountState(positions_usd={"MSFT": 100.0}, cash_usd=100.0)
     results = evaluate_decisions(decisions, account, make_limits())
 
     assert [r.reasoning for r in results] == ["AI 근거 BUY", "AI 근거 SELL", "AI 근거 HOLD"]
-
-
-def test_reasoning_passes_through_even_when_circuit_breaker_blocks_everything():
-    decisions = [Decision(ticker="AAPL", action="BUY", amount_usd=10.0, reasoning="AI 근거")]
-    account = AccountState(positions_usd={}, daily_pnl_pct=-5.0)
-    results = evaluate_decisions(decisions, account, make_limits())
-
-    assert results[0].reasoning == "AI 근거"

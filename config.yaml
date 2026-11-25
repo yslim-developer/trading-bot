@@ -22,9 +22,8 @@ extra_watchlist:
     - V
 
 risk_limits:
-  per_ticker_max_usd: 10
-  per_ticker_max_position_usd: 50
-  daily_max_buy_usd: 300
+  buy_cash_ratio: 0.95      # 매수에 쓸 USD(외화) 현금 비율 -- 원화는 사용 안 함
+  max_position_pct: 40      # 종목당 최대 비중: 총자산(보유 주식 + USD 현금)의 40%
   daily_loss_circuit_pct: -3.0
   max_concurrent_positions: 10
 

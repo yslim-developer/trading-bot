@@ -13,9 +13,8 @@ def test_load_config_parses_yaml_and_env(tmp_path, monkeypatch):
               - AAPL
               - MSFT
             risk_limits:
-              per_ticker_max_usd: 100
-              per_ticker_max_position_usd: 500
-              daily_max_buy_usd: 300
+              buy_cash_ratio: 0.95
+              max_position_pct: 40
               daily_loss_circuit_pct: -3.0
               max_concurrent_positions: 5
             schedule:
@@ -36,8 +35,8 @@ def test_load_config_parses_yaml_and_env(tmp_path, monkeypatch):
     config = load_config(config_path=str(config_path), env_path=str(env_path))
 
     assert config.watchlist == ["AAPL", "MSFT"]
-    assert config.risk_limits.per_ticker_max_usd == 100
-    assert config.risk_limits.per_ticker_max_position_usd == 500
+    assert config.risk_limits.buy_cash_ratio == 0.95
+    assert config.risk_limits.max_position_pct == 40
     assert config.risk_limits.daily_loss_circuit_pct == -3.0
     assert config.run_time_kst == "22:40"
     assert config.toss_client_id == "test-id"
@@ -57,9 +56,8 @@ def test_load_config_reads_optional_healthcheck_url_when_set(tmp_path, monkeypat
             watchlist:
               - AAPL
             risk_limits:
-              per_ticker_max_usd: 100
-              per_ticker_max_position_usd: 500
-              daily_max_buy_usd: 300
+              buy_cash_ratio: 0.95
+              max_position_pct: 40
               daily_loss_circuit_pct: -3.0
               max_concurrent_positions: 5
             schedule:
@@ -91,9 +89,8 @@ def test_load_config_reads_approval_section_when_present(tmp_path):
             watchlist:
               - AAPL
             risk_limits:
-              per_ticker_max_usd: 100
-              per_ticker_max_position_usd: 500
-              daily_max_buy_usd: 300
+              buy_cash_ratio: 0.95
+              max_position_pct: 40
               daily_loss_circuit_pct: -3.0
               max_concurrent_positions: 5
             schedule:
@@ -128,8 +125,8 @@ def test_regime_switch_defaults_when_absent(tmp_path, monkeypatch):
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text(
         "watchlist: [AAPL]\n"
-        "risk_limits: {per_ticker_max_usd: 10, per_ticker_max_position_usd: 50, "
-        "daily_max_buy_usd: 300, daily_loss_circuit_pct: -3.0, max_concurrent_positions: 5}\n"
+        "risk_limits: {buy_cash_ratio: 0.95, max_position_pct: 40, "
+        "daily_loss_circuit_pct: -3.0, max_concurrent_positions: 5}\n"
         "schedule: {run_time_kst: '22:40'}\n",
         encoding="utf-8",
     )
@@ -150,8 +147,8 @@ def test_regime_switch_parsed_from_yaml(tmp_path, monkeypatch):
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text(
         "watchlist: [AAPL]\n"
-        "risk_limits: {per_ticker_max_usd: 10, per_ticker_max_position_usd: 50, "
-        "daily_max_buy_usd: 300, daily_loss_circuit_pct: -3.0, max_concurrent_positions: 5}\n"
+        "risk_limits: {buy_cash_ratio: 0.95, max_position_pct: 40, "
+        "daily_loss_circuit_pct: -3.0, max_concurrent_positions: 5}\n"
         "schedule: {run_time_kst: '22:40'}\n"
         "regime_switch: {enabled: true, vix_threshold: 30.0, confirm_days: 3}\n",
         encoding="utf-8",
@@ -174,9 +171,8 @@ def test_extra_watchlist_applies_only_through_until_date(tmp_path):
               until: "2026-12-02"
               tickers: [META, V]
             risk_limits:
-              per_ticker_max_usd: 100
-              per_ticker_max_position_usd: 500
-              daily_max_buy_usd: 300
+              buy_cash_ratio: 0.95
+              max_position_pct: 40
               daily_loss_circuit_pct: -3.0
               max_concurrent_positions: 5
             schedule:

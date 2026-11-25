@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 from datetime import date
 
 from orchestrator.config import load_config
@@ -9,7 +10,7 @@ from orchestrator.notifier import (
     wait_for_telegram_reply,
 )
 from orchestrator import regime as regime_module
-from orchestrator.risk_engine import Decision, evaluate_decisions
+from orchestrator.risk_engine import AccountState, Decision, evaluate_decisions
 from orchestrator.state import (
     count_consecutive_signal,
     get_current_regime,
@@ -34,6 +35,66 @@ from orchestrator.trading_agents_client import (
 
 STOP_FILE = "STOP"
 DB_PATH = "data/trading.db"
+SELL_SETTLE_SECONDS = 10
+# TradingAgents 5단계 등급 중 BUY 로 매핑되는 것들의 배분 가중치 (그 외는 1)
+BUY_WEIGHTS = {"buy": 2.0, "overweight": 1.0}
+
+
+def _process_order(conn, toss, run_date, r, execute, summary_lines):
+    """RiskDecision 하나를 기록하고 (execute 면) 주문한다. 실제 주문이 나갔으면 True."""
+    record_order(conn, run_date, r.ticker, r.action, r.amount_usd, r.approved, r.reason)
+    amount = f" ${r.amount_usd:,.2f}" if r.action == "BUY" and r.approved else ""
+    summary_lines.append(
+        f"- {r.ticker} {r.action}{amount}: {'승인' if r.approved else '거부'} ({r.reason})"
+    )
+    if r.reasoning:
+        summary_lines.append(f"  이유: {r.reasoning}")
+
+    if not r.approved or not execute:
+        return False
+
+    if has_order_been_placed(conn, run_date, r.ticker, r.action):
+        summary_lines.append("  이미 주문 처리됨 - 재실행에서 건너뜀")
+        return False
+
+    client_order_id = f"{run_date}-{r.ticker}-{r.action}"
+    result = None
+    sold_quantity = None
+    try:
+        if r.action == "BUY":
+            result = toss.place_market_buy(r.ticker, r.amount_usd, client_order_id)
+        elif r.action == "SELL":
+            sold_quantity = toss.get_holding_quantity(r.ticker)
+            if float(sold_quantity) > 0:
+                result = toss.place_market_sell(r.ticker, sold_quantity, client_order_id)
+    except TossApiError as exc:
+        # Order was never confirmed placed. Isolated to this ticker so
+        # one rejected/failed order (e.g. insufficient funds, invalid
+        # symbol) doesn't block the remaining tickers' orders.
+        summary_lines.append(f"  주문 실패 (토스 API 오류): {exc}")
+        return False
+    except Exception as exc:
+        summary_lines.append(f"  주문 실패: {exc}")
+        return False
+
+    if result is None:
+        return False
+
+    try:
+        mark_order_placed_with_retry(
+            conn, run_date, r.ticker, r.action, result["orderId"],
+            quantity=sold_quantity if r.action == "SELL" else None,
+        )
+    except Exception as exc:
+        # Order WAS placed (real money moved) but the local ledger
+        # write failed — must be visually distinct from a normal
+        # rejection/failure since same-day retry won't happen
+        # (mark_run_completed still fires below).
+        summary_lines.append(
+            f"[{run_date}] {r.ticker} 주문은 체결됐으나 로컬 기록 실패 "
+            f"(order_id={result['orderId']}): {exc} - 수동 확인 필요"
+        )
+    return True
 
 
 def _handle_regime(conn, toss, config, run_date, account, dry_run):
@@ -140,7 +201,7 @@ def run(dry_run):
         decisions = []
         for ticker in config.watchlist:
             try:
-                action, reasoning = run_analysis(ticker, run_date)
+                action, reasoning, raw_decision = run_analysis(ticker, run_date)
             except FallbackExhaustedError:
                 send_telegram_message(
                     config,
@@ -157,21 +218,32 @@ def run(dry_run):
             except Exception as exc:
                 send_telegram_message(config, f"[{run_date}] {ticker} 분석 실패: {exc}")
                 continue
-            amount = config.risk_limits.per_ticker_max_usd if action == "BUY" else 0.0
             decisions.append(
-                Decision(ticker=ticker, action=action, amount_usd=amount, reasoning=reasoning)
+                Decision(
+                    ticker=ticker, action=action, reasoning=reasoning,
+                    weight=BUY_WEIGHTS.get(str(raw_decision).strip().lower(), 1.0),
+                )
             )
 
-        risk_results = evaluate_decisions(decisions, account, config.risk_limits)
+        # 매도를 먼저 내고, 그 뒤 USD 현금으로 매수를 배분한다 (매도 대금도 매수에 쓰기 위해).
+        sell_side = [d for d in decisions if d.action != "BUY"]
+        buy_side = [d for d in decisions if d.action == "BUY"]
+        sell_results = evaluate_decisions(sell_side, account, config.risk_limits)
 
         approval_granted = True
-        if not dry_run and config.approval_enabled and any(r.approved for r in risk_results):
+        if not dry_run and config.approval_enabled and (
+            buy_side or any(r.approved for r in sell_results)
+        ):
             proposal_lines = [f"[{run_date}] 제안 주문 (승인 대기)"]
-            for r in risk_results:
+            for r in sell_results:
                 if r.approved:
-                    proposal_lines.append(f"- {r.ticker} {r.action}: ${r.amount_usd:.2f}")
+                    proposal_lines.append(f"- {r.ticker} {r.action}")
                     if r.reasoning:
                         proposal_lines.append(f"  이유: {r.reasoning}")
+            for d in buy_side:
+                proposal_lines.append(f"- {d.ticker} BUY (가중치 {d.weight:g}, 금액은 매도 후 USD 현금으로 배분)")
+                if d.reasoning:
+                    proposal_lines.append(f"  이유: {d.reasoning}")
             proposal_lines.append(
                 f"{config.approval_timeout_minutes}분 안에 '승인' 또는 '거부'로 답장해주세요. "
                 "무응답 시 자동 거부됩니다."
@@ -189,58 +261,27 @@ def run(dry_run):
             )
 
         summary_lines = [f"[{run_date}] 자동매매 결과{' (드라이런)' if dry_run else ''}"]
-        for r in risk_results:
-            record_order(conn, run_date, r.ticker, r.action, r.amount_usd, r.approved, r.reason)
-            summary_lines.append(
-                f"- {r.ticker} {r.action}: {'승인' if r.approved else '거부'} ({r.reason})"
+        execute = not dry_run and approval_granted
+        sells_placed = [_process_order(conn, toss, run_date, r, execute, summary_lines) for r in sell_results]
+
+        if buy_side:
+            if any(sells_placed):
+                time.sleep(SELL_SETTLE_SECONDS)  # 시장가 매도 체결/매수가능금액 반영 대기
+            holdings = toss.get_holdings()
+            cash_usd = toss.get_purchasing_power_usd()
+            buy_account = AccountState(
+                positions_usd={h["symbol"]: float(h["marketValue"]["amount"]) for h in holdings},
+                daily_pnl_pct=account.daily_pnl_pct,
+                cash_usd=cash_usd,
             )
-            if r.reasoning:
-                summary_lines.append(f"  이유: {r.reasoning}")
-
-            if not r.approved or dry_run or not approval_granted:
-                continue
-
-            if has_order_been_placed(conn, run_date, r.ticker, r.action):
-                summary_lines.append("  이미 주문 처리됨 - 재실행에서 건너뜀")
-                continue
-
-            client_order_id = f"{run_date}-{r.ticker}-{r.action}"
-            result = None
-            sold_quantity = None
-            try:
-                if r.action == "BUY":
-                    result = toss.place_market_buy(r.ticker, r.amount_usd, client_order_id)
-                elif r.action == "SELL":
-                    sold_quantity = toss.get_holding_quantity(r.ticker)
-                    if float(sold_quantity) > 0:
-                        result = toss.place_market_sell(r.ticker, sold_quantity, client_order_id)
-            except TossApiError as exc:
-                # Order was never confirmed placed. Isolated to this ticker so
-                # one rejected/failed order (e.g. insufficient funds, invalid
-                # symbol) doesn't block the remaining tickers' orders.
-                summary_lines.append(f"  주문 실패 (토스 API 오류): {exc}")
-                continue
-            except Exception as exc:
-                summary_lines.append(f"  주문 실패: {exc}")
-                continue
-
-            if result is None:
-                continue
-
-            try:
-                mark_order_placed_with_retry(
-                    conn, run_date, r.ticker, r.action, result["orderId"],
-                    quantity=sold_quantity if r.action == "SELL" else None,
-                )
-            except Exception as exc:
-                # Order WAS placed (real money moved) but the local ledger
-                # write failed — must be visually distinct from a normal
-                # rejection/failure since same-day retry won't happen
-                # (mark_run_completed still fires below).
-                summary_lines.append(
-                    f"[{run_date}] {r.ticker} 주문은 체결됐으나 로컬 기록 실패 "
-                    f"(order_id={result['orderId']}): {exc} - 수동 확인 필요"
-                )
+            equity = sum(buy_account.positions_usd.values()) + cash_usd
+            summary_lines.append(
+                f"매수 배분: USD 현금 ${cash_usd:,.2f} x {config.risk_limits.buy_cash_ratio:.0%}"
+                f" / 종목당 상한 ${equity * config.risk_limits.max_position_pct / 100:,.2f}"
+                f" (총자산 ${equity:,.2f}의 {config.risk_limits.max_position_pct:g}%)"
+            )
+            for r in evaluate_decisions(buy_side, buy_account, config.risk_limits):
+                _process_order(conn, toss, run_date, r, execute, summary_lines)
 
         send_telegram_message(config, "\n".join(summary_lines))
         ping_healthcheck(config)

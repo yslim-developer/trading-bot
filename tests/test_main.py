@@ -17,9 +17,8 @@ def make_config():
     return SimpleNamespace(
         watchlist=["AAPL", "MSFT"],
         risk_limits=RiskLimits(
-            per_ticker_max_usd=100.0,
-            per_ticker_max_position_usd=100000.0,
-            daily_max_buy_usd=300.0,
+            buy_cash_ratio=0.95,
+            max_position_pct=100.0,
             daily_loss_circuit_pct=-3.0,
             max_concurrent_positions=5,
         ),
@@ -70,7 +69,7 @@ class FakeTossClient:
 def patch_dependencies(monkeypatch, tmp_path):
     monkeypatch.setattr(main_module, "load_config", lambda: make_config())
     monkeypatch.setattr(main_module, "TossClient", FakeTossClient)
-    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: ("BUY", ""))
+    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: ("BUY", "", "Buy"))
     monkeypatch.setattr(main_module, "send_telegram_message", lambda config, text: None)
     monkeypatch.setattr(main_module, "ping_healthcheck", lambda config, suffix="": None)
     monkeypatch.setattr(
@@ -81,6 +80,7 @@ def patch_dependencies(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(main_module, "DB_PATH", str(tmp_path / "trading.db"))
+    monkeypatch.setattr(main_module, "SELL_SETTLE_SECONDS", 0)
     monkeypatch.setattr(main_module, "STOP_FILE", str(tmp_path / "STOP"))
     monkeypatch.chdir(tmp_path)
 
@@ -109,14 +109,15 @@ def test_normal_run_places_approved_orders(monkeypatch):
 
     main_module.run(dry_run=False)
 
-    assert captured_orders["buys"] == [("AAPL", 100.0), ("MSFT", 100.0)]
+    # USD 현금 1000 x 95% = 950 을 두 종목(둘 다 "Buy", 가중 2)에 반씩
+    assert captured_orders["buys"] == [("AAPL", 475.0), ("MSFT", 475.0)]
 
 
 def test_telegram_summary_includes_ai_reasoning(monkeypatch):
     monkeypatch.setattr(
         main_module,
         "run_analysis",
-        lambda ticker, run_date: ("BUY", f"{ticker} 실적 모멘텀 강함"),
+        lambda ticker, run_date: ("BUY", f"{ticker} 실적 모멘텀 강함", "Buy"),
     )
 
     sent = []
@@ -262,7 +263,7 @@ def test_quota_exhausted_error_produces_distinct_message_and_continues(monkeypat
     def fake_run_analysis(ticker, run_date):
         if ticker == "AAPL":
             raise QuotaExhaustedError(f"{ticker}: Gemini 일일 요청 한도 초과")
-        return "BUY", ""
+        return "BUY", "", "Buy"
 
     monkeypatch.setattr(main_module, "run_analysis", fake_run_analysis)
 
@@ -293,7 +294,7 @@ def test_fallback_exhausted_error_produces_distinct_message_and_continues(monkey
     def fake_run_analysis(ticker, run_date):
         if ticker == "AAPL":
             raise FallbackExhaustedError(f"{ticker}: Gemini 한도 초과 + groq 폴백도 실패")
-        return "BUY", ""
+        return "BUY", "", "Buy"
 
     monkeypatch.setattr(main_module, "run_analysis", fake_run_analysis)
 
@@ -437,7 +438,7 @@ def test_approval_mode_rejection_allows_same_day_retry(monkeypatch):
 def test_approval_mode_not_invoked_when_nothing_approved(monkeypatch):
     config = make_approval_config()
     monkeypatch.setattr(main_module, "load_config", lambda: config)
-    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: ("HOLD", ""))
+    monkeypatch.setattr(main_module, "run_analysis", lambda ticker, run_date: ("HOLD", "", "Hold"))
     # wait_for_telegram_reply left unpatched-by-default (raises via autouse fixture if called)
 
     main_module.run(dry_run=False)  # 예외 없이 완료되어야 함 (승인 대기 안 탐)
@@ -544,7 +545,7 @@ def test_sell_flow_places_order_with_holding_quantity(monkeypatch):
     monkeypatch.setattr(
         main_module,
         "run_analysis",
-        lambda ticker, run_date: ("SELL", "") if ticker == "AAPL" else ("HOLD", ""),
+        lambda ticker, run_date: ("SELL", "", "Sell") if ticker == "AAPL" else ("HOLD", ""),
     )
 
     main_module.run(dry_run=False)
@@ -748,3 +749,34 @@ def test_run_records_full_holdings_snapshot():
 
     conn = sqlite3.connect(main_module.DB_PATH)
     assert conn.execute("SELECT symbol, quantity FROM holdings").fetchall() == [("NVTS", "20")]
+
+
+def test_sells_run_before_buys_and_buys_use_cash_read_after_sells(monkeypatch):
+    calls = []
+
+    class OrderedTossClient(FakeTossClient):
+        def get_holding_quantity(self, ticker):
+            return "3"
+
+        def place_market_sell(self, ticker, quantity, client_order_id):
+            calls.append(("SELL", ticker))
+            return {"orderId": "s", "clientOrderId": client_order_id}
+
+        def get_purchasing_power_usd(self):
+            calls.append(("CASH",))
+            return 200.0
+
+        def place_market_buy(self, ticker, amount_usd, client_order_id):
+            calls.append(("BUY", ticker, amount_usd))
+            return {"orderId": "b", "clientOrderId": client_order_id}
+
+    monkeypatch.setattr(main_module, "TossClient", OrderedTossClient)
+    # watchlist 순서는 AAPL(BUY) -> MSFT(SELL) 이지만 매도가 먼저 나가야 한다
+    monkeypatch.setattr(
+        main_module, "run_analysis",
+        lambda t, d: ("BUY", "", "Overweight") if t == "AAPL" else ("SELL", "", "Sell"),
+    )
+
+    main_module.run(dry_run=False)
+
+    assert calls == [("SELL", "MSFT"), ("CASH",), ("BUY", "AAPL", 190.0)]
