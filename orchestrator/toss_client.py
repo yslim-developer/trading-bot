@@ -5,6 +5,16 @@ import requests
 from orchestrator.risk_engine import AccountState
 
 
+def daily_pnl_pct_by_ticker(items):
+    """holdings items -> {symbol: 당일 손익률(%)}. 값이 없는 종목은 빠진다."""
+    rates = {}
+    for item in items:
+        rate = (item.get("dailyProfitLoss") or {}).get("rate")
+        if rate is not None:
+            rates[item["symbol"]] = float(rate) * 100
+    return rates
+
+
 class TossApiError(Exception):
     def __init__(self, status_code, code, message):
         self.status_code = status_code
@@ -109,7 +119,11 @@ class TossClient:
             if item["symbol"] in watchlist
         }
         daily_pnl_pct = float(result["dailyProfitLoss"]["rate"]) * 100
-        return AccountState(positions_usd=positions_usd, daily_pnl_pct=daily_pnl_pct)
+        return AccountState(
+            positions_usd=positions_usd,
+            daily_pnl_pct=daily_pnl_pct,
+            daily_pnl_pct_by_ticker=daily_pnl_pct_by_ticker(result["items"]),
+        )
 
     def get_holdings(self):
         """watchlist 와 무관하게 계좌의 전체 보유 종목 items 를 반환한다."""

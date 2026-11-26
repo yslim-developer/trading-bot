@@ -21,12 +21,27 @@ def buy(ticker, weight=1.0, reasoning=""):
     return Decision(ticker=ticker, action="BUY", weight=weight, reasoning=reasoning)
 
 
-def test_circuit_breaker_blocks_all_orders_when_daily_loss_exceeds_threshold():
-    account = AccountState(positions_usd={}, daily_pnl_pct=-5.0, cash_usd=1000.0)
+def test_circuit_breaker_is_per_ticker_daily_loss():
+    # 계좌 전체가 -5% 여도 종목별로만 본다: AAPL(-3.5%)만 막히고 MSFT(-1%)는 그대로
+    account = AccountState(
+        positions_usd={"AAPL": 100.0, "MSFT": 100.0}, daily_pnl_pct=-5.0, cash_usd=1000.0,
+        daily_pnl_pct_by_ticker={"AAPL": -3.5, "MSFT": -1.0},
+    )
+    decisions = [buy("AAPL"), Decision(ticker="AAPL", action="SELL"), buy("MSFT")]
+    results = evaluate_decisions(decisions, account, make_limits(max_position_pct=100.0))
+
+    assert [(r.approved, r.reason) for r in results[:2]] == [
+        (False, "circuit_breaker(-3.50%)"), (False, "circuit_breaker(-3.50%)"),
+    ]
+    assert results[2].approved is True
+
+
+def test_circuit_breaker_threshold_is_inclusive():
+    account = AccountState(positions_usd={"AAPL": 100.0}, cash_usd=1000.0,
+                           daily_pnl_pct_by_ticker={"AAPL": -3.0})
     results = evaluate_decisions([buy("AAPL")], account, make_limits())
 
     assert results[0].approved is False
-    assert results[0].reason == "circuit_breaker"
 
 
 def test_buy_budget_is_cash_ratio_split_by_weight():

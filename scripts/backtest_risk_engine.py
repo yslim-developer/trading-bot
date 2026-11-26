@@ -66,14 +66,15 @@ def simulate(tickers, limits, price_returns):
             positions_usd[t] += positions_usd[t] * day_return[t]
 
         account = AccountState(
-            positions_usd=dict(positions_usd), daily_pnl_pct=daily_pnl_pct, cash_usd=cash_usd
+            positions_usd=dict(positions_usd), daily_pnl_pct=daily_pnl_pct, cash_usd=cash_usd,
+            daily_pnl_pct_by_ticker={t: day_return[t] * 100 for t in tickers if positions_usd[t] > 0},
         )
         decisions = [
             Decision(ticker=t, action="BUY") for t in tickers
         ]
         results = evaluate_decisions(decisions, account, limits)
 
-        triggered_today = any(r.reason == "circuit_breaker" for r in results)
+        triggered_today = any(r.reason.startswith("circuit_breaker") for r in results)
         if triggered_today:
             circuit_breaker_days.append(date)
 

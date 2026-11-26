@@ -18,8 +18,6 @@ from orchestrator.state import (
     has_order_been_placed,
     has_run_completed_today,
     init_db,
-    is_circuit_breaker_triggered_today,
-    mark_circuit_breaker_triggered,
     mark_order_placed_with_retry,
     mark_run_completed,
     mark_run_started,
@@ -27,7 +25,7 @@ from orchestrator.state import (
     record_order,
     record_regime_signal,
 )
-from orchestrator.toss_client import TossApiError, TossClient
+from orchestrator.toss_client import TossApiError, TossClient, daily_pnl_pct_by_ticker
 from orchestrator.trading_agents_client import (
     FallbackExhaustedError,
     QuotaExhaustedError,
@@ -191,24 +189,12 @@ def run(dry_run):
         account = toss.get_account_state(config.watchlist)
         record_holdings(conn, run_date, toss.get_holdings())
 
-        if account.daily_pnl_pct <= config.risk_limits.daily_loss_circuit_pct:
-            mark_circuit_breaker_triggered(conn, run_date)
-
         if config.regime_switch.enabled:
             if _handle_regime(conn, toss, config, run_date, account, dry_run):
                 ping_healthcheck(config)
                 if not dry_run:
                     mark_run_completed(conn, run_date)
                 return
-
-        if is_circuit_breaker_triggered_today(conn, run_date):
-            send_telegram_message(
-                config,
-                f"[{run_date}] 서킷브레이커 발동 (당일 손익 {account.daily_pnl_pct:.2f}%) - 신규 주문 없음.",
-            )
-            ping_healthcheck(config)
-            mark_run_completed(conn, run_date)
-            return
 
         decisions = []
         for ticker in config.watchlist:
@@ -239,16 +225,8 @@ def run(dry_run):
 
         # 분석은 장 시작 전에 미리 돌리고, 매매는 trade_time_et(장 시작 직후)에 한다.
         _wait_until_trade_time(config)
-        account = toss.get_account_state(config.watchlist)  # 장 시작 후 손익으로 다시 판단
-        if account.daily_pnl_pct <= config.risk_limits.daily_loss_circuit_pct:
-            mark_circuit_breaker_triggered(conn, run_date)
-            send_telegram_message(
-                config,
-                f"[{run_date}] 서킷브레이커 발동 (당일 손익 {account.daily_pnl_pct:.2f}%) - 신규 주문 없음.",
-            )
-            ping_healthcheck(config)
-            mark_run_completed(conn, run_date)
-            return
+        # 장 시작 후 종목별 당일 손익률로 서킷브레이커를 판단 (evaluate_decisions)
+        account = toss.get_account_state(config.watchlist)
 
         # 매도를 먼저 내고, 그 뒤 USD 현금으로 매수를 배분한다 (매도 대금도 매수에 쓰기 위해).
         sell_side = [d for d in decisions if d.action != "BUY"]
@@ -298,6 +276,7 @@ def run(dry_run):
                 positions_usd={h["symbol"]: float(h["marketValue"]["amount"]) for h in holdings},
                 daily_pnl_pct=account.daily_pnl_pct,
                 cash_usd=cash_usd,
+                daily_pnl_pct_by_ticker=daily_pnl_pct_by_ticker(holdings),
             )
             equity = sum(buy_account.positions_usd.values()) + cash_usd
             summary_lines.append(

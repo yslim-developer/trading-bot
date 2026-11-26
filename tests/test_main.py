@@ -150,18 +150,25 @@ def test_dry_run_does_not_place_orders(monkeypatch):
     assert orders_placed == []
 
 
-def test_circuit_breaker_blocks_orders(monkeypatch):
+def test_circuit_breaker_blocks_only_the_losing_ticker(monkeypatch):
     class LosingTossClient(FakeTossClient):
         def get_account_state(self, watchlist):
-            return AccountState(positions_usd={}, daily_pnl_pct=-5.0)
+            return AccountState(
+                positions_usd={"AAPL": 50.0}, daily_pnl_pct=-5.0,
+                daily_pnl_pct_by_ticker={"AAPL": -4.0},
+            )
 
-    monkeypatch.setattr(main_module, "TossClient", LosingTossClient)
-    orders_placed = []
-    monkeypatch.setattr(
-        main_module, "run_analysis", lambda ticker, run_date: (_ for _ in ()).throw(AssertionError("should not analyze"))
-    )
+        def get_holdings(self):
+            return [{"symbol": "AAPL", "quantity": "1", "averagePurchasePrice": "50",
+                     "marketValue": {"amount": "50"}, "dailyProfitLoss": {"rate": "-0.04"}}]
 
-    main_module.run(dry_run=False)  # 예외 없이 조기 종료되어야 함
+    tracking = LosingTossClient()
+    monkeypatch.setattr(main_module, "TossClient", lambda *a, **k: tracking)
+
+    main_module.run(dry_run=False)
+
+    # 계좌 전체 -5% 여도 실행은 계속되고, -4% 인 AAPL 만 매수가 막힌다
+    assert [o[1] for o in tracking.orders] == ["MSFT"]
 
 
 def test_us_market_holiday_skips_analysis_and_marks_completed(monkeypatch):

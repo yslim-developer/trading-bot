@@ -18,13 +18,14 @@ class AccountState:
     positions_usd: dict = field(default_factory=dict)  # ticker -> 현재 평가금액(USD)
     daily_pnl_pct: float = 0.0  # 당일 손익률(%), 음수면 손실
     cash_usd: float = 0.0  # USD 현금 매수 가능 금액 (원화 제외)
+    daily_pnl_pct_by_ticker: dict = field(default_factory=dict)  # 보유 종목별 당일 손익률(%)
 
 
 @dataclass
 class RiskLimits:
     buy_cash_ratio: float  # 매수에 쓸 USD 현금 비율 (0.95 = 95%)
     max_position_pct: float  # 종목당 최대 비중 (총자산 = 보유 주식 + USD 현금 대비 %)
-    daily_loss_circuit_pct: float  # 예: -3.0 이면 -3% 이하일 때 서킷브레이커 발동
+    daily_loss_circuit_pct: float  # 종목별: 보유 종목의 당일 손익률이 이 값(%) 이하면 그 종목 주문 중단
     max_concurrent_positions: int
 
 
@@ -64,13 +65,10 @@ def evaluate_decisions(decisions, account, limits):
     BUY 금액: USD 현금 x buy_cash_ratio 를 BUY 종목들에 weight 비율로 나누고, 종목당 보유액이
     총자산(보유 주식 + USD 현금)의 max_position_pct 를 넘지 않게 자른다.
     """
-    if account.daily_pnl_pct <= limits.daily_loss_circuit_pct:
-        return [
-            RiskDecision(d.ticker, d.action, 0.0, False, "circuit_breaker", d.reasoning)
-            for d in decisions
-        ]
+    def tripped(ticker):
+        return account.daily_pnl_pct_by_ticker.get(ticker, 0.0) <= limits.daily_loss_circuit_pct
 
-    sold = {d.ticker for d in decisions if d.action == "SELL"}
+    sold = {d.ticker for d in decisions if d.action == "SELL" and not tripped(d.ticker)}
     positions = {t: v for t, v in account.positions_usd.items() if t not in sold}
     equity = sum(positions.values()) + account.cash_usd
     position_cap = equity * limits.max_position_pct / 100
@@ -80,7 +78,12 @@ def evaluate_decisions(decisions, account, limits):
     results = [None] * len(decisions)
     buy_idx, weights, rooms = [], [], []
     for i, d in enumerate(decisions):
-        if d.action == "HOLD":
+        if d.action != "HOLD" and tripped(d.ticker):
+            rate = account.daily_pnl_pct_by_ticker[d.ticker]
+            results[i] = RiskDecision(
+                d.ticker, d.action, 0.0, False, f"circuit_breaker({rate:.2f}%)", d.reasoning
+            )
+        elif d.action == "HOLD":
             results[i] = RiskDecision(d.ticker, d.action, 0.0, False, "hold", d.reasoning)
         elif d.action == "SELL":
             results[i] = RiskDecision(d.ticker, d.action, d.amount_usd, True, "approved", d.reasoning)
